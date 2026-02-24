@@ -4,7 +4,9 @@ using System.Reflection;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
+using cameraTools.Replay;
 using HarmonyLib;
+using UnityEngine;
 
 namespace cameraTools
 {
@@ -22,11 +24,25 @@ namespace cameraTools
 
         public static readonly ManualLogSource TemplateLogger = BepInEx.Logging.Logger.CreateLogSource(ModName);
 
+        public static ConfigEntry<KeyboardShortcut> PanelToggleKey = null!;
+        public static ConfigEntry<float> DefaultSmoothness = null!;
+
         public void Awake()
         {
+            PanelToggleKey = Config.Bind("UI", "PanelToggleKey", new KeyboardShortcut(KeyCode.F6),
+                "Hotkey to toggle the camera tools panel");
+            DefaultSmoothness = Config.Bind("Camera", "DefaultSmoothness", 0.5f,
+                new ConfigDescription("Default free fly smoothness", new AcceptableValueRange<float>(0f, 1f)));
+
             Assembly assembly = Assembly.GetExecutingAssembly();
             HarmonyInstance.PatchAll(assembly);
             SetupWatcher();
+
+            gameObject.AddComponent<FreeFlyPanel>();
+            gameObject.AddComponent<ReplayRecorder>();
+            gameObject.AddComponent<ReplayPlayer>();
+            gameObject.AddComponent<ReplayTimelinePanel>();
+            ReplayCommands.Register();
         }
 
         private void OnDestroy()
