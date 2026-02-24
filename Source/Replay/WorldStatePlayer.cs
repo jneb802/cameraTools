@@ -75,9 +75,15 @@ namespace cameraTools.Replay
             // Destroyed category: has Destroyed, no Created, real object missing
             foreach (var zdoid in hasDestroyed)
             {
-                if (!hasCreated.Contains(zdoid) && !_zdoidLookup.ContainsKey(zdoid))
+                bool inCreated = hasCreated.Contains(zdoid);
+                bool inWorld = _zdoidLookup.ContainsKey(zdoid);
+                if (!inCreated && !inWorld)
                     _destroyedCategory.Add(zdoid);
+                else
+                    cameraToolsPlugin.TemplateLogger.LogInfo($"[WorldStatePlayer] Destroyed zdoid={zdoid.UserID}:{zdoid.ID} skipped category: inCreated={inCreated} inWorld={inWorld}");
             }
+
+            cameraToolsPlugin.TemplateLogger.LogInfo($"[WorldStatePlayer] Init: {_events.Count} events, {hasCreated.Count} created, {hasDestroyed.Count} destroyed, {_destroyedCategory.Count} in destroyed category, {_zdoidLookup.Count} objects in world");
 
             // Created category: has Created, no Destroyed → hide real object
             foreach (var zdoid in hasCreated)
@@ -96,12 +102,18 @@ namespace cameraTools.Replay
                 var zdoid = new ZDOID(evt.ZdoUserID, evt.ZdoID);
                 if (_destroyedCategory.Contains(zdoid) && !_activeWorldGhosts.Contains(zdoid))
                 {
+                    cameraToolsPlugin.TemplateLogger.LogInfo($"[WorldStatePlayer] Spawning ghost for destroyed piece: zdoid={zdoid.UserID}:{zdoid.ID} prefabHash={evt.PrefabHash} pos={evt.Position}");
                     var rot = Quaternion.Euler(evt.Rotation);
                     var ghost = _ghostManager.GetOrCreateWorldGhost(evt.ZdoUserID, evt.ZdoID, evt.PrefabHash, evt.Position, rot);
                     if (ghost != null)
                     {
                         _activeWorldGhosts.Add(zdoid);
                         ApplyVisualState(ghost, evt.HealthFraction, evt.State);
+                        cameraToolsPlugin.TemplateLogger.LogInfo($"[WorldStatePlayer] Ghost spawned successfully");
+                    }
+                    else
+                    {
+                        cameraToolsPlugin.TemplateLogger.LogWarning($"[WorldStatePlayer] Ghost spawn FAILED for prefabHash={evt.PrefabHash}");
                     }
                 }
             }

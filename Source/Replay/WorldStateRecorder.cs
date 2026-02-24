@@ -5,12 +5,18 @@ namespace cameraTools.Replay
 {
     public class WorldStateRecorder
     {
-        private readonly HashSet<ZDOID> _trackedZdos = new HashSet<ZDOID>();
+        private struct TrackedPiece
+        {
+            public int PrefabHash;
+            public Vector3 Position;
+            public Vector3 Rotation;
+            public uint LastRevision;
+            public float LastHealth;
+            public int LastState;
+        }
+
+        private readonly Dictionary<ZDOID, TrackedPiece> _trackedPieces = new Dictionary<ZDOID, TrackedPiece>();
         private readonly HashSet<ZDOID> _nonPieceZdos = new HashSet<ZDOID>();
-        private readonly Dictionary<ZDOID, uint> _lastRevision = new Dictionary<ZDOID, uint>();
-        private readonly Dictionary<ZDOID, float> _lastHealth = new Dictionary<ZDOID, float>();
-        private readonly Dictionary<ZDOID, int> _lastState = new Dictionary<ZDOID, int>();
-        private readonly Dictionary<ZDOID, ZNetView> _zdoidToNview = new Dictionary<ZDOID, ZNetView>();
         private readonly List<WorldEvent> _events = new List<WorldEvent>();
 
         public void CaptureBaseline()
@@ -25,7 +31,6 @@ namespace cameraTools.Replay
                     continue;
 
                 var zdoid = kvp.Key.m_uid;
-                _zdoidToNview[zdoid] = nview;
 
                 if (nview.GetComponent<Piece>() == null)
                 {
@@ -33,17 +38,19 @@ namespace cameraTools.Replay
                     continue;
                 }
 
-                _trackedZdos.Add(zdoid);
-
                 var zdo = kvp.Key;
-                _lastRevision[zdoid] = zdo.DataRevision;
-
-                float healthFraction = GetHealthFraction(nview, zdo);
-                int state = zdo.GetInt(ZDOVars.s_state, 0);
-
-                _lastHealth[zdoid] = healthFraction;
-                _lastState[zdoid] = state;
+                _trackedPieces[zdoid] = new TrackedPiece
+                {
+                    PrefabHash = zdo.GetPrefab(),
+                    Position = nview.transform.position,
+                    Rotation = nview.transform.eulerAngles,
+                    LastRevision = zdo.DataRevision,
+                    LastHealth = GetHealthFraction(nview, zdo),
+                    LastState = zdo.GetInt(ZDOVars.s_state, 0)
+                };
             }
+
+            cameraToolsPlugin.TemplateLogger.LogInfo($"[WorldStateRecorder] Baseline captured: {_trackedPieces.Count} pieces tracked");
         }
 
         public void ScanFrame(float time)
@@ -66,23 +73,26 @@ namespace cameraTools.Replay
                 var zdoid = kvp.Key.m_uid;
                 var zdo = kvp.Key;
 
-                if (_trackedZdos.Contains(zdoid))
+                if (_trackedPieces.TryGetValue(zdoid, out var tracked))
                 {
                     // Check for modifications via DataRevision
-                    if (!_lastRevision.TryGetValue(zdoid, out uint lastRev) || zdo.DataRevision != lastRev)
+                    if (zdo.DataRevision != tracked.LastRevision)
                     {
-                        _lastRevision[zdoid] = zdo.DataRevision;
-
                         float healthFraction = GetHealthFraction(nview, zdo);
                         int state = zdo.GetInt(ZDOVars.s_state, 0);
 
-                        bool healthChanged = !_lastHealth.TryGetValue(zdoid, out float lastH) || !Mathf.Approximately(healthFraction, lastH);
-                        bool stateChanged = !_lastState.TryGetValue(zdoid, out int lastS) || state != lastS;
+                        bool healthChanged = !Mathf.Approximately(healthFraction, tracked.LastHealth);
+                        bool stateChanged = state != tracked.LastState;
+
+                        // Always update cached revision and position
+                        tracked.LastRevision = zdo.DataRevision;
+                        tracked.Position = nview.transform.position;
+                        tracked.Rotation = nview.transform.eulerAngles;
 
                         if (healthChanged || stateChanged)
                         {
-                            _lastHealth[zdoid] = healthFraction;
-                            _lastState[zdoid] = state;
+                            tracked.LastHealth = healthFraction;
+                            tracked.LastState = state;
 
                             _events.Add(new WorldEvent
                             {
@@ -90,34 +100,38 @@ namespace cameraTools.Replay
                                 Type = WorldEventType.StateChanged,
                                 ZdoUserID = zdoid.UserID,
                                 ZdoID = zdoid.ID,
-                                PrefabHash = zdo.GetPrefab(),
+                                PrefabHash = tracked.PrefabHash,
                                 Position = nview.transform.position,
                                 Rotation = nview.transform.eulerAngles,
                                 HealthFraction = healthFraction,
                                 State = state
                             });
                         }
+
+                        _trackedPieces[zdoid] = tracked;
                     }
                 }
                 else if (!_nonPieceZdos.Contains(zdoid))
                 {
                     // New ZDO - check if it has a Piece component
-                    _zdoidToNview[zdoid] = nview;
-
                     if (nview.GetComponent<Piece>() == null)
                     {
                         _nonPieceZdos.Add(zdoid);
                         continue;
                     }
 
-                    _trackedZdos.Add(zdoid);
-                    _lastRevision[zdoid] = zdo.DataRevision;
-
                     float healthFraction = GetHealthFraction(nview, zdo);
                     int state = zdo.GetInt(ZDOVars.s_state, 0);
 
-                    _lastHealth[zdoid] = healthFraction;
-                    _lastState[zdoid] = state;
+                    _trackedPieces[zdoid] = new TrackedPiece
+                    {
+                        PrefabHash = zdo.GetPrefab(),
+                        Position = nview.transform.position,
+                        Rotation = nview.transform.eulerAngles,
+                        LastRevision = zdo.DataRevision,
+                        LastHealth = healthFraction,
+                        LastState = state
+                    };
 
                     _events.Add(new WorldEvent
                     {
@@ -134,9 +148,9 @@ namespace cameraTools.Replay
                 }
             }
 
-            // Check for destroyed ZDOs
+            // Check for destroyed ZDOs — use cached data
             var destroyed = new List<ZDOID>();
-            foreach (var zdoid in _trackedZdos)
+            foreach (var zdoid in _trackedPieces.Keys)
             {
                 if (!currentFrameZdos.Contains(zdoid))
                     destroyed.Add(zdoid);
@@ -144,24 +158,10 @@ namespace cameraTools.Replay
 
             foreach (var zdoid in destroyed)
             {
-                _trackedZdos.Remove(zdoid);
+                var cached = _trackedPieces[zdoid];
+                _trackedPieces.Remove(zdoid);
 
-                _lastHealth.TryGetValue(zdoid, out float lastHealth);
-                _lastState.TryGetValue(zdoid, out int lastState);
-
-                // Try to get last known prefab hash and position
-                int prefabHash = 0;
-                var position = Vector3.zero;
-                var rotation = Vector3.zero;
-
-                if (_zdoidToNview.TryGetValue(zdoid, out var nview) && nview != null && nview)
-                {
-                    position = nview.transform.position;
-                    rotation = nview.transform.eulerAngles;
-                    var zdo = nview.GetZDO();
-                    if (zdo != null)
-                        prefabHash = zdo.GetPrefab();
-                }
+                cameraToolsPlugin.TemplateLogger.LogInfo($"[WorldStateRecorder] Destroyed: zdoid={zdoid.UserID}:{zdoid.ID} prefabHash={cached.PrefabHash} pos={cached.Position}");
 
                 _events.Add(new WorldEvent
                 {
@@ -169,21 +169,31 @@ namespace cameraTools.Replay
                     Type = WorldEventType.Destroyed,
                     ZdoUserID = zdoid.UserID,
                     ZdoID = zdoid.ID,
-                    PrefabHash = prefabHash,
-                    Position = position,
-                    Rotation = rotation,
-                    HealthFraction = lastHealth,
-                    State = lastState
+                    PrefabHash = cached.PrefabHash,
+                    Position = cached.Position,
+                    Rotation = cached.Rotation,
+                    HealthFraction = cached.LastHealth,
+                    State = cached.LastState
                 });
-
-                _lastRevision.Remove(zdoid);
-                _lastHealth.Remove(zdoid);
-                _lastState.Remove(zdoid);
-                _zdoidToNview.Remove(zdoid);
             }
         }
 
-        public List<WorldEvent> GetEvents() => _events;
+        public List<WorldEvent> GetEvents()
+        {
+            int created = 0, destroyed = 0, stateChanged = 0, zeroPrefab = 0;
+            foreach (var e in _events)
+            {
+                switch (e.Type)
+                {
+                    case WorldEventType.Created: created++; break;
+                    case WorldEventType.Destroyed: destroyed++; break;
+                    case WorldEventType.StateChanged: stateChanged++; break;
+                }
+                if (e.PrefabHash == 0) zeroPrefab++;
+            }
+            cameraToolsPlugin.TemplateLogger.LogInfo($"[WorldStateRecorder] Events summary: {_events.Count} total ({created} created, {destroyed} destroyed, {stateChanged} stateChanged, {zeroPrefab} with prefabHash=0)");
+            return _events;
+        }
 
         private static float GetHealthFraction(ZNetView nview, ZDO zdo)
         {
