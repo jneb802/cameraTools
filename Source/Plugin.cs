@@ -6,12 +6,12 @@ using BepInEx.Configuration;
 using BepInEx.Logging;
 using HarmonyLib;
 
-namespace Template
+namespace cameraTools
 {
     [BepInPlugin(ModGUID, ModName, ModVersion)]
-    public class TemplatePlugin : BaseUnityPlugin
+    public class cameraToolsPlugin : BaseUnityPlugin
     {
-        private const string ModName = "Template";
+        private const string ModName = "cameraTools";
         private const string ModVersion = "1.0.0";
         private const string Author = "modAuthorName";
         private const string ModGUID = Author + "." + ModName;
