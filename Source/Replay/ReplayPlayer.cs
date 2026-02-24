@@ -15,6 +15,7 @@ namespace cameraTools.Replay
         private float _playbackSpeed = 1f;
         private bool _paused;
         private int _lastTriggerIndex;
+        private WorldStatePlayer? _worldStatePlayer;
 
         // Entities present in the current interpolation window
         private readonly HashSet<(long, uint)> _activeEntities = new HashSet<(long, uint)>();
@@ -24,6 +25,8 @@ namespace cameraTools.Replay
         public float Duration => _replay?.Duration ?? 0f;
         public float PlaybackSpeed => _playbackSpeed;
         public bool IsPaused => _paused;
+        public bool HasWorldEvents => _replay?.WorldEvents.Count > 0;
+        public int WorldEventCount => _replay?.WorldEvents.Count ?? 0;
 
         private void Awake()
         {
@@ -57,6 +60,17 @@ namespace cameraTools.Replay
             _paused = false;
             _lastTriggerIndex = 0;
             _activeEntities.Clear();
+
+            if (replay.WorldEvents.Count > 0)
+            {
+                _worldStatePlayer = new WorldStatePlayer(replay.WorldEvents, _ghostManager);
+                _worldStatePlayer.Initialize();
+            }
+            else
+            {
+                _worldStatePlayer = null;
+            }
+
             IsPlaying = true;
 
             // Auto-enter free fly mode
@@ -71,6 +85,8 @@ namespace cameraTools.Replay
             if (!IsPlaying)
                 return;
 
+            _worldStatePlayer?.RestoreAll();
+            _worldStatePlayer = null;
             _ghostManager?.DestroyAll();
             _ghostManager = null;
             _replay = null;
@@ -100,6 +116,8 @@ namespace cameraTools.Replay
             // If seeking backward, reset trigger index
             if (_playbackTime < oldTime)
                 _lastTriggerIndex = FindTriggerIndex(_playbackTime);
+
+            _worldStatePlayer?.SeekTo(_playbackTime);
         }
 
         public void AdjustSpeed(float delta)
@@ -150,6 +168,9 @@ namespace cameraTools.Replay
 
                 _ghostManager.GetOrCreateGhost(a.ZdoUserID, a.ZdoID, a.PrefabHash, a.Position, a.Rotation);
 
+                // Use nearest frame's snapshot for equipment (doesn't interpolate)
+                EntitySnapshot equipSource = a;
+
                 if (frameBEntities.TryGetValue(key, out var b))
                 {
                     // Interpolate between frames
@@ -164,6 +185,7 @@ namespace cameraTools.Replay
                     int stateI = (t < 0.5f) ? a.StateI : b.StateI;
 
                     _ghostManager.UpdateGhost(a.ZdoUserID, a.ZdoID, pos, rot, fwd, side, turn, bools, stateF, stateI);
+                    if (t >= 0.5f) equipSource = b;
                 }
                 else
                 {
@@ -171,6 +193,8 @@ namespace cameraTools.Replay
                     _ghostManager.UpdateGhost(a.ZdoUserID, a.ZdoID, a.Position, a.Rotation,
                         a.ForwardSpeed, a.SidewaySpeed, a.TurnSpeed, a.AnimBools, a.StateF, a.StateI);
                 }
+
+                _ghostManager.UpdateEquipment(a.ZdoUserID, a.ZdoID, equipSource);
             }
 
             // Also include entities that only appear in frameB
@@ -184,6 +208,7 @@ namespace cameraTools.Replay
                 _ghostManager.GetOrCreateGhost(b.ZdoUserID, b.ZdoID, b.PrefabHash, b.Position, b.Rotation);
                 _ghostManager.UpdateGhost(b.ZdoUserID, b.ZdoID, b.Position, b.Rotation,
                     b.ForwardSpeed, b.SidewaySpeed, b.TurnSpeed, b.AnimBools, b.StateF, b.StateI);
+                _ghostManager.UpdateEquipment(b.ZdoUserID, b.ZdoID, b);
             }
 
             // Prune ghosts for entities no longer present
@@ -198,6 +223,9 @@ namespace cameraTools.Replay
 
             // Fire trigger events
             FirePendingTriggers();
+
+            // Update world state
+            _worldStatePlayer?.UpdatePlayback(_playbackTime);
         }
 
         private void FirePendingTriggers()

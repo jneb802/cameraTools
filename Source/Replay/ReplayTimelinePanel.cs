@@ -35,7 +35,8 @@ namespace cameraTools.Replay
             float duration = player.Duration;
 
             // Time display
-            GUILayout.Label($"Time: {FormatTime(currentTime)} / {FormatTime(duration)}");
+            string worldInfo = player.HasWorldEvents ? $"  [{player.WorldEventCount} world events]" : "";
+            GUILayout.Label($"Time: {FormatTime(currentTime)} / {FormatTime(duration)}{worldInfo}");
 
             // Scrub slider
             float newTime = GUILayout.HorizontalSlider(currentTime, 0f, duration);

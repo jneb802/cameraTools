@@ -14,8 +14,8 @@ namespace cameraTools
 
         private void Start()
         {
-            float y = (Screen.height - 180f) / 2f;
-            _windowRect = new Rect(20f, y, 250f, 180f);
+            float y = (Screen.height - 220f) / 2f;
+            _windowRect = new Rect(20f, y, 300f, 220f);
 
             _lineTexture = new Texture2D(1, 1);
             _lineTexture.SetPixel(0, 0, new Color(1f, 0f, 0f, 0.8f));
@@ -33,15 +33,6 @@ namespace cameraTools
 
         private void OnGUI()
         {
-            if (!_showPanel || GameCamera.m_instance == null)
-                return;
-
-            _windowRect = GUI.Window(WindowId, _windowRect, DrawWindow, "Camera Tools");
-
-            // Clamp to screen bounds
-            _windowRect.x = Mathf.Clamp(_windowRect.x, 0f, Screen.width - _windowRect.width);
-            _windowRect.y = Mathf.Clamp(_windowRect.y, 0f, Screen.height - _windowRect.height);
-
             if (_showFrameGuide && _lineTexture != null)
             {
                 float cropWidth = Screen.height * (9f / 16f);
@@ -50,6 +41,15 @@ namespace cameraTools
                 GUI.DrawTexture(new Rect(leftX - LineWidth, 0, LineWidth, Screen.height), _lineTexture);
                 GUI.DrawTexture(new Rect(rightX, 0, LineWidth, Screen.height), _lineTexture);
             }
+
+            if (!_showPanel || GameCamera.m_instance == null)
+                return;
+
+            _windowRect = GUI.Window(WindowId, _windowRect, DrawWindow, "Camera Tools");
+
+            // Clamp to screen bounds
+            _windowRect.x = Mathf.Clamp(_windowRect.x, 0f, Screen.width - _windowRect.width);
+            _windowRect.y = Mathf.Clamp(_windowRect.y, 0f, Screen.height - _windowRect.height);
         }
 
         private void DrawWindow(int id)

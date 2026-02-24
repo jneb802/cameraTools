@@ -8,19 +8,55 @@ namespace cameraTools.Replay
     {
         public static void Register()
         {
-            var cmd = new Terminal.ConsoleCommand(
+            new Terminal.ConsoleCommand(
+                "record",
+                "Recording: record [name] | record stop",
+                RunRecord,
+                optionsFetcher: GetRecordOptions
+            );
+
+            new Terminal.ConsoleCommand(
                 "replay",
-                "Replay system: replay <file> | replay list | replay exit | replay record | replay record stop <name>",
-                Run,
-                optionsFetcher: GetOptions
+                "Replay: replay <file> | replay list | replay exit",
+                RunReplay,
+                optionsFetcher: GetReplayOptions
             );
         }
 
-        private static void Run(Terminal.ConsoleEventArgs args)
+        private static void RunRecord(Terminal.ConsoleEventArgs args)
+        {
+            // "record stop" — explicitly stop
+            if (args.Length >= 2 && args[1].ToLower() == "stop")
+            {
+                if (!ReplayRecorder.IsRecording)
+                {
+                    args.Context.AddString("Not currently recording.");
+                    return;
+                }
+                ReplayRecorder.Instance.StopRecording();
+                args.Context.AddString($"Recording saved: {ReplayRecorder.Instance.RecordingName}.valreplay");
+                return;
+            }
+
+            // Toggle: if already recording, stop and save
+            if (ReplayRecorder.IsRecording)
+            {
+                ReplayRecorder.Instance.StopRecording();
+                args.Context.AddString($"Recording saved: {ReplayRecorder.Instance.RecordingName}.valreplay");
+                return;
+            }
+
+            // Start recording with optional custom name
+            string? name = args.Length >= 2 ? args[1] : null;
+            ReplayRecorder.Instance.StartRecording(name);
+            args.Context.AddString($"Recording started: {ReplayRecorder.Instance.RecordingName}");
+        }
+
+        private static void RunReplay(Terminal.ConsoleEventArgs args)
         {
             if (args.Length < 2)
             {
-                args.Context.AddString("Usage: replay <file> | list | exit | record [stop <name>]");
+                args.Context.AddString("Usage: replay <file> | list | exit");
                 return;
             }
 
@@ -42,34 +78,10 @@ namespace cameraTools.Replay
                     args.Context.AddString("Replay stopped.");
                     break;
 
-                case "record":
-                    HandleRecord(args);
-                    break;
-
                 default:
-                    // Treat as filename
                     PlayReplay(args.Context, sub);
                     break;
             }
-        }
-
-        private static void HandleRecord(Terminal.ConsoleEventArgs args)
-        {
-            if (args.Length >= 3 && args[2].ToLower() == "stop")
-            {
-                if (args.Length < 4)
-                {
-                    args.Context.AddString("Usage: replay record stop <name>");
-                    return;
-                }
-                string name = args[3];
-                ReplayRecorder.Instance.StopRecording(name);
-                args.Context.AddString($"Recording saved: {name}.valreplay");
-                return;
-            }
-
-            ReplayRecorder.Instance.StartRecording();
-            args.Context.AddString("Recording started. Use 'replay record stop <name>' to save.");
         }
 
         private static void ListReplays(Terminal terminal)
@@ -117,9 +129,14 @@ namespace cameraTools.Replay
             }
         }
 
-        private static List<string> GetOptions()
+        private static List<string> GetRecordOptions()
         {
-            var options = new List<string> { "list", "exit", "record" };
+            return new List<string> { "stop" };
+        }
+
+        private static List<string> GetReplayOptions()
+        {
+            var options = new List<string> { "list", "exit" };
 
             var dir = ReplayFileIO.GetReplayDirectory();
             if (Directory.Exists(dir))

@@ -28,6 +28,24 @@ namespace cameraTools.Replay
         public int StateF;
         public int StateI;
 
+        // Equipment visuals (only populated for entities with VisEquipment)
+        public bool HasEquipment;
+        public string LeftItem;
+        public int LeftItemVariant;
+        public string RightItem;
+        public string ChestItem;
+        public string LegItem;
+        public string HelmetItem;
+        public string ShoulderItem;
+        public int ShoulderItemVariant;
+        public string UtilityItem;
+        public string TrinketItem;
+        public string BeardItem;
+        public string HairItem;
+        public string LeftBackItem;
+        public int LeftBackItemVariant;
+        public string RightBackItem;
+
         public bool GetBool(int bit) => (AnimBools & (1 << bit)) != 0;
 
         public static byte PackBools(bool inWater, bool onGround, bool encumbered,
@@ -53,6 +71,26 @@ namespace cameraTools.Replay
         public string TriggerName;
     }
 
+    public enum WorldEventType : byte
+    {
+        Created = 0,
+        Destroyed = 1,
+        StateChanged = 2
+    }
+
+    public struct WorldEvent
+    {
+        public float Time;
+        public WorldEventType Type;
+        public long ZdoUserID;
+        public uint ZdoID;
+        public int PrefabHash;
+        public Vector3 Position;
+        public Vector3 Rotation; // euler angles
+        public float HealthFraction; // 0-1
+        public int State; // door state, etc.
+    }
+
     public class ReplayFrame
     {
         public float Time;
@@ -62,11 +100,12 @@ namespace cameraTools.Replay
     public class ReplayFile
     {
         public const string Magic = "VRPL";
-        public const int Version = 1;
+        public const int Version = 3;
 
         public long Timestamp;
         public float Duration;
         public List<ReplayFrame> Frames = new List<ReplayFrame>();
         public List<TriggerEvent> TriggerEvents = new List<TriggerEvent>();
+        public List<WorldEvent> WorldEvents = new List<WorldEvent>();
     }
 }

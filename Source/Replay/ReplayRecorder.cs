@@ -8,6 +8,7 @@ namespace cameraTools.Replay
     {
         public static ReplayRecorder Instance { get; private set; } = null!;
         public static bool IsRecording { get; private set; }
+        public string RecordingName { get; private set; } = "";
 
         private const int ZdoSalt = 438569;
 
@@ -28,13 +29,14 @@ namespace cameraTools.Replay
         private ReplayFile? _currentReplay;
         private float _recordStartTime;
         private readonly List<TriggerEvent> _pendingTriggers = new List<TriggerEvent>();
+        private WorldStateRecorder? _worldStateRecorder;
 
         private void Awake()
         {
             Instance = this;
         }
 
-        public void StartRecording()
+        public void StartRecording(string? name = null)
         {
             if (IsRecording)
             {
@@ -48,17 +50,23 @@ namespace cameraTools.Replay
                 return;
             }
 
+            RecordingName = name ?? DateTime.Now.ToString("yyyy-MM-dd_HHmmss");
+
             _currentReplay = new ReplayFile
             {
                 Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
             };
             _pendingTriggers.Clear();
             _recordStartTime = Time.time;
+
+            _worldStateRecorder = new WorldStateRecorder();
+            _worldStateRecorder.CaptureBaseline();
+
             IsRecording = true;
-            cameraToolsPlugin.TemplateLogger.LogInfo("Recording started");
+            cameraToolsPlugin.TemplateLogger.LogInfo($"Recording started: {RecordingName}");
         }
 
-        public void StopRecording(string name)
+        public void StopRecording()
         {
             if (!IsRecording || _currentReplay == null)
             {
@@ -70,11 +78,20 @@ namespace cameraTools.Replay
             _currentReplay.Duration = Time.time - _recordStartTime;
             _currentReplay.TriggerEvents.AddRange(_pendingTriggers);
 
-            var path = System.IO.Path.Combine(ReplayFileIO.GetReplayDirectory(), name + ".valreplay");
+            if (_worldStateRecorder != null)
+            {
+                var worldEvents = _worldStateRecorder.GetEvents();
+                worldEvents.Sort((a, b) => a.Time.CompareTo(b.Time));
+                _currentReplay.WorldEvents.AddRange(worldEvents);
+            }
+
+            var path = System.IO.Path.Combine(ReplayFileIO.GetReplayDirectory(), RecordingName + ".valreplay");
             try
             {
                 ReplayFileIO.Write(path, _currentReplay);
-                cameraToolsPlugin.TemplateLogger.LogInfo($"Recording saved: {name}.valreplay ({_currentReplay.Frames.Count} frames, {_currentReplay.Duration:F1}s)");
+                int worldCount = _currentReplay.WorldEvents.Count;
+                string worldInfo = worldCount > 0 ? $", {worldCount} world events" : "";
+                cameraToolsPlugin.TemplateLogger.LogInfo($"Recording saved: {RecordingName}.valreplay ({_currentReplay.Frames.Count} frames, {_currentReplay.Duration:F1}s{worldInfo})");
             }
             catch (Exception ex)
             {
@@ -83,6 +100,7 @@ namespace cameraTools.Replay
 
             _currentReplay = null;
             _pendingTriggers.Clear();
+            _worldStateRecorder = null;
         }
 
         public void CaptureTrigger(ZDOID zdoid, string triggerName)
@@ -147,10 +165,33 @@ namespace cameraTools.Replay
                     StateI = zdo.GetInt(ZdoSalt + Hash_StateI, 0)
                 };
 
+                var visEquip = nview.GetComponent<VisEquipment>();
+                if (visEquip != null)
+                {
+                    snapshot.HasEquipment = true;
+                    snapshot.LeftItem = visEquip.m_leftItem ?? "";
+                    snapshot.LeftItemVariant = visEquip.m_leftItemVariant;
+                    snapshot.RightItem = visEquip.m_rightItem ?? "";
+                    snapshot.ChestItem = visEquip.m_chestItem ?? "";
+                    snapshot.LegItem = visEquip.m_legItem ?? "";
+                    snapshot.HelmetItem = visEquip.m_helmetItem ?? "";
+                    snapshot.ShoulderItem = visEquip.m_shoulderItem ?? "";
+                    snapshot.ShoulderItemVariant = visEquip.m_shoulderItemVariant;
+                    snapshot.UtilityItem = visEquip.m_utilityItem ?? "";
+                    snapshot.TrinketItem = visEquip.m_trinketItem ?? "";
+                    snapshot.BeardItem = visEquip.m_beardItem ?? "";
+                    snapshot.HairItem = visEquip.m_hairItem ?? "";
+                    snapshot.LeftBackItem = visEquip.m_leftBackItem ?? "";
+                    snapshot.LeftBackItemVariant = visEquip.m_leftBackItemVariant;
+                    snapshot.RightBackItem = visEquip.m_rightBackItem ?? "";
+                }
+
                 frame.Entities.Add(snapshot);
             }
 
             _currentReplay.Frames.Add(frame);
+
+            _worldStateRecorder?.ScanFrame(frame.Time);
         }
 
         private void OnDestroy()
@@ -160,6 +201,7 @@ namespace cameraTools.Replay
                 IsRecording = false;
                 _currentReplay = null;
                 _pendingTriggers.Clear();
+                _worldStateRecorder = null;
             }
         }
     }

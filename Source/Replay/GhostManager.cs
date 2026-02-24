@@ -9,15 +9,19 @@ namespace cameraTools.Replay
         private readonly Dictionary<long, Dictionary<uint, GhostInstance>> _ghosts =
             new Dictionary<long, Dictionary<uint, GhostInstance>>();
 
+        private readonly HashSet<(long, uint)> _worldGhostKeys = new HashSet<(long, uint)>();
+
         private class GhostInstance
         {
             public GameObject GameObject;
             public Animator? Animator;
+            public VisEquipment? VisEquipment;
 
-            public GhostInstance(GameObject go, Animator? animator)
+            public GhostInstance(GameObject go, Animator? animator, VisEquipment? visEquipment)
             {
                 GameObject = go;
                 Animator = animator;
+                VisEquipment = visEquipment;
             }
         }
 
@@ -76,6 +80,7 @@ namespace cameraTools.Replay
                 collider.enabled = false;
 
             var animator = ghost.GetComponentInChildren<Animator>();
+            var visEquipment = ghost.GetComponent<VisEquipment>();
 
             // Store
             if (!_ghosts.TryGetValue(userID, out innerDict))
@@ -83,7 +88,7 @@ namespace cameraTools.Replay
                 innerDict = new Dictionary<uint, GhostInstance>();
                 _ghosts[userID] = innerDict;
             }
-            innerDict[objectID] = new GhostInstance(ghost, animator);
+            innerDict[objectID] = new GhostInstance(ghost, animator, visEquipment);
 
             return ghost;
         }
@@ -118,6 +123,36 @@ namespace cameraTools.Replay
             ghost.Animator.SetInteger(Hash_StateI, stateI);
         }
 
+        public void UpdateEquipment(long userID, uint objectID, EntitySnapshot snapshot)
+        {
+            if (!snapshot.HasEquipment)
+                return;
+
+            if (!_ghosts.TryGetValue(userID, out var innerDict) ||
+                !innerDict.TryGetValue(objectID, out var ghost))
+                return;
+
+            if (ghost.VisEquipment == null)
+                return;
+
+            var ve = ghost.VisEquipment;
+            ve.m_leftItem = snapshot.LeftItem ?? "";
+            ve.m_leftItemVariant = snapshot.LeftItemVariant;
+            ve.m_rightItem = snapshot.RightItem ?? "";
+            ve.m_chestItem = snapshot.ChestItem ?? "";
+            ve.m_legItem = snapshot.LegItem ?? "";
+            ve.m_helmetItem = snapshot.HelmetItem ?? "";
+            ve.m_shoulderItem = snapshot.ShoulderItem ?? "";
+            ve.m_shoulderItemVariant = snapshot.ShoulderItemVariant;
+            ve.m_utilityItem = snapshot.UtilityItem ?? "";
+            ve.m_trinketItem = snapshot.TrinketItem ?? "";
+            ve.m_beardItem = snapshot.BeardItem ?? "";
+            ve.m_hairItem = snapshot.HairItem ?? "";
+            ve.m_leftBackItem = snapshot.LeftBackItem ?? "";
+            ve.m_leftBackItemVariant = snapshot.LeftBackItemVariant;
+            ve.m_rightBackItem = snapshot.RightBackItem ?? "";
+        }
+
         public void FireTrigger(long userID, uint objectID, string triggerName)
         {
             if (!_ghosts.TryGetValue(userID, out var innerDict) ||
@@ -126,6 +161,74 @@ namespace cameraTools.Replay
 
             if (ghost.Animator != null)
                 ghost.Animator.SetTrigger(triggerName);
+        }
+
+        public GameObject? GetOrCreateWorldGhost(long userID, uint objectID, int prefabHash, Vector3 position, Quaternion rotation)
+        {
+            var key = (userID, objectID);
+
+            if (_ghosts.TryGetValue(userID, out var innerDict) &&
+                innerDict.TryGetValue(objectID, out var existing))
+            {
+                if (existing.GameObject != null)
+                    return existing.GameObject;
+                innerDict.Remove(objectID);
+            }
+
+            var prefab = ZNetScene.instance?.GetPrefab(prefabHash);
+            if (prefab == null)
+                return null;
+
+            ZNetView.m_forceDisableInit = true;
+            var ghost = Object.Instantiate(prefab, position, rotation);
+            ZNetView.m_forceDisableInit = false;
+
+            // Disable sync components
+            DisableComponent<ZSyncTransform>(ghost);
+            DisableComponent<ZSyncAnimation>(ghost);
+
+            // Disable WearNTear behavior but keep component for VFX refs
+            var wearNTear = ghost.GetComponent<WearNTear>();
+            if (wearNTear != null)
+                wearNTear.enabled = false;
+
+            // Make kinematic and disable colliders
+            var rb = ghost.GetComponent<Rigidbody>();
+            if (rb != null)
+                rb.isKinematic = true;
+
+            foreach (var collider in ghost.GetComponentsInChildren<Collider>())
+                collider.enabled = false;
+
+            var animator = ghost.GetComponentInChildren<Animator>();
+            var visEquipment = ghost.GetComponent<VisEquipment>();
+
+            if (!_ghosts.TryGetValue(userID, out innerDict))
+            {
+                innerDict = new Dictionary<uint, GhostInstance>();
+                _ghosts[userID] = innerDict;
+            }
+            innerDict[objectID] = new GhostInstance(ghost, animator, visEquipment);
+            _worldGhostKeys.Add(key);
+
+            return ghost;
+        }
+
+        public GameObject? GetWorldGhostObject(long userID, uint objectID)
+        {
+            if (_ghosts.TryGetValue(userID, out var innerDict) &&
+                innerDict.TryGetValue(objectID, out var ghost) &&
+                ghost.GameObject != null)
+            {
+                return ghost.GameObject;
+            }
+            return null;
+        }
+
+        public void RemoveWorldGhost(long userID, uint objectID)
+        {
+            _worldGhostKeys.Remove((userID, objectID));
+            RemoveGhost(userID, objectID);
         }
 
         public void RemoveGhost(long userID, uint objectID)
@@ -155,6 +258,7 @@ namespace cameraTools.Replay
                 }
             }
             _ghosts.Clear();
+            _worldGhostKeys.Clear();
         }
 
         private static void DisableComponent<T>(GameObject go) where T : MonoBehaviour
