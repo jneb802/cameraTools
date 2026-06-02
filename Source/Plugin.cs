@@ -39,6 +39,7 @@ namespace cameraTools
             SetupWatcher();
 
             gameObject.AddComponent<FreeFlyPanel>();
+            gameObject.AddComponent<CreativeZoneCameraController>();
             gameObject.AddComponent<ReplayRecorder>();
             gameObject.AddComponent<ReplayPlayer>();
             gameObject.AddComponent<ReplayTimelinePanel>();
@@ -93,4 +94,4 @@ namespace cameraTools
             }
         }
     }
-} 
+}

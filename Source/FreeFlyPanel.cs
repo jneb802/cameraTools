@@ -11,11 +11,12 @@ namespace cameraTools
         private const int WindowId = 98234;
         private Texture2D? _lineTexture;
         private const float LineWidth = 2f;
+        private string _lastAction = "";
 
         private void Start()
         {
-            float y = (Screen.height - 220f) / 2f;
-            _windowRect = new Rect(20f, y, 300f, 220f);
+            float y = (Screen.height - 360f) / 2f;
+            _windowRect = new Rect(20f, y, 360f, 360f);
 
             _lineTexture = new Texture2D(1, 1);
             _lineTexture.SetPixel(0, 0, new Color(1f, 0f, 0f, 0.8f));
@@ -62,6 +63,20 @@ namespace cameraTools
             if (toggled != isFreeFly)
                 GameCamera.m_instance.ToggleFreeFly();
 
+            bool hudVisible = !(Hud.instance != null && Hud.instance.m_userHidden);
+            bool hudToggled = GUILayout.Toggle(hudVisible, "Show HUD");
+            if (hudToggled != hudVisible)
+            {
+                try
+                {
+                    CreativeZoneCameraController.SetHudVisible(hudToggled);
+                }
+                catch (System.Exception ex)
+                {
+                    _lastAction = ex.Message;
+                }
+            }
+
             // Player follows camera toggle (only relevant when free fly is active)
             bool followEnabled = PlayerFollowPatch.FollowEnabled;
             bool followToggled = GUILayout.Toggle(followEnabled, "Player Follows Camera");
@@ -98,6 +113,63 @@ namespace cameraTools
 
             GUILayout.Space(8f);
             _showFrameGuide = GUILayout.Toggle(_showFrameGuide, "Show 9:16 Frame");
+
+            GUILayout.Space(8f);
+            GUILayout.Label(CreativeZoneCameraController.BuildStatus(Vector3.zero));
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Prepare"))
+            {
+                try
+                {
+                    CreativeZoneCameraController.SetFreeFly(true);
+                    CreativeZoneCameraController.SetHudVisible(false);
+                    _lastAction = "Prepared";
+                }
+                catch (System.Exception ex)
+                {
+                    _lastAction = ex.Message;
+                }
+            }
+
+            if (CreativeZoneCameraController.IsOrbiting)
+            {
+                if (GUILayout.Button("Stop Orbit"))
+                {
+                    CreativeZoneCameraController.StopOrbit();
+                    _lastAction = "Orbit stopped";
+                }
+            }
+            else if (GUILayout.Button("Orbit 360"))
+            {
+                try
+                {
+                    CreativeZoneCameraController.StartOrbit(Vector3.zero, 20f, 360f);
+                    _lastAction = "Orbit started";
+                }
+                catch (System.Exception ex)
+                {
+                    _lastAction = ex.Message;
+                }
+            }
+            GUILayout.EndHorizontal();
+
+            if (GUILayout.Button("Screenshot"))
+            {
+                try
+                {
+                    _lastAction = CreativeZoneCameraController.CaptureScreenshot(null);
+                }
+                catch (System.Exception ex)
+                {
+                    _lastAction = ex.Message;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(_lastAction))
+            {
+                GUILayout.Label(_lastAction);
+            }
 
             GUI.DragWindow();
         }
