@@ -62,6 +62,12 @@ namespace cameraTools
             if (toggled != isFreeFly)
                 GameCamera.m_instance.ToggleFreeFly();
 
+            // Player follows camera toggle (only relevant when free fly is active)
+            bool followEnabled = PlayerFollowPatch.FollowEnabled;
+            bool followToggled = GUILayout.Toggle(followEnabled, "Player Follows Camera");
+            if (followToggled != followEnabled)
+                PlayerFollowPatch.FollowEnabled = followToggled;
+
             GUILayout.Space(8f);
 
             // Smoothness slider
