@@ -11,6 +11,7 @@ namespace cameraTools
     {
         private const string DefaultOriginText = "0 0 0";
         private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
+        private static bool _commandsRegistered;
         private static CreativeZoneCameraController? _instance;
 
         private bool _orbiting;
@@ -223,152 +224,161 @@ namespace cameraTools
             return string.IsNullOrWhiteSpace(fileName) ? "cameraTools.png" : fileName;
         }
 
+        internal static void RegisterCommands()
+        {
+            if (_commandsRegistered)
+            {
+                return;
+            }
+
+            _commandsRegistered = true;
+
+            _ = new Terminal.ConsoleCommand("ct_freefly", "Set camera freefly: ct_freefly <on|off|toggle|status>", args =>
+            {
+                try
+                {
+                    string mode = args.Length >= 2 ? args[1].ToLowerInvariant() : "status";
+                    if (mode == "on")
+                    {
+                        SetFreeFly(true);
+                    }
+                    else if (mode == "off")
+                    {
+                        SetFreeFly(false);
+                    }
+                    else if (mode == "toggle")
+                    {
+                        if (GameCamera.instance == null)
+                        {
+                            throw new InvalidOperationException("GameCamera is not ready.");
+                        }
+
+                        GameCamera.instance.ToggleFreeFly();
+                    }
+                    else if (mode != "status")
+                    {
+                        args.Context.AddString("Usage: ct_freefly <on|off|toggle|status>");
+                        return;
+                    }
+
+                    args.Context.AddString($"OK: freefly={GameCamera.InFreeFly()}");
+                }
+                catch (Exception ex)
+                {
+                    args.Context.AddString($"ERROR: {ex.Message}");
+                }
+            });
+
+            _ = new Terminal.ConsoleCommand("ct_hud", "Set HUD visibility: ct_hud <show|hide|toggle|status>", args =>
+            {
+                try
+                {
+                    string mode = args.Length >= 2 ? args[1].ToLowerInvariant() : "status";
+                    bool visible = !(Hud.instance != null && Hud.instance.m_userHidden);
+                    if (mode == "show")
+                    {
+                        SetHudVisible(true);
+                    }
+                    else if (mode == "hide")
+                    {
+                        SetHudVisible(false);
+                    }
+                    else if (mode == "toggle")
+                    {
+                        SetHudVisible(!visible);
+                    }
+                    else if (mode != "status")
+                    {
+                        args.Context.AddString("Usage: ct_hud <show|hide|toggle|status>");
+                        return;
+                    }
+
+                    args.Context.AddString($"OK: hudVisible={!(Hud.instance != null && Hud.instance.m_userHidden)}");
+                }
+                catch (Exception ex)
+                {
+                    args.Context.AddString($"ERROR: {ex.Message}");
+                }
+            });
+
+            _ = new Terminal.ConsoleCommand("ct_status", $"Report camera position relative to origin. Usage: ct_status [x y z], default {DefaultOriginText}", args =>
+            {
+                try
+                {
+                    args.Context.AddString(BuildStatus(ParseOrigin(args, 1)));
+                }
+                catch (Exception ex)
+                {
+                    args.Context.AddString($"ERROR: {ex.Message}");
+                }
+            });
+
+            _ = new Terminal.ConsoleCommand("ct_prepare", "Enable freefly and hide HUD. Usage: ct_prepare [x y z]", args =>
+            {
+                try
+                {
+                    SetFreeFly(true);
+                    SetHudVisible(false);
+                    args.Context.AddString("OK: camera prepared");
+                    args.Context.AddString(BuildStatus(ParseOrigin(args, 1)));
+                }
+                catch (Exception ex)
+                {
+                    args.Context.AddString($"ERROR: {ex.Message}");
+                }
+            });
+
+            _ = new Terminal.ConsoleCommand("ct_orbit", "Orbit the camera around origin. Usage: ct_orbit <start|stop|status> [duration] [degrees] [x y z]", args =>
+            {
+                try
+                {
+                    string mode = args.Length >= 2 ? args[1].ToLowerInvariant() : "status";
+                    if (mode == "start")
+                    {
+                        float duration = args.Length >= 3 ? ParseFloat(args[2]) : 20f;
+                        float degrees = args.Length >= 4 ? ParseFloat(args[3]) : 360f;
+                        Vector3 origin = ParseOrigin(args, 4);
+                        StartOrbit(origin, duration, degrees);
+                        args.Context.AddString($"OK: orbit started duration={duration:F2} degrees={degrees:F2} origin={Format(origin)}");
+                    }
+                    else if (mode == "stop")
+                    {
+                        StopOrbit();
+                        args.Context.AddString("OK: orbit stopped");
+                    }
+                    else if (mode == "status")
+                    {
+                        args.Context.AddString($"OK: orbiting={IsOrbiting}");
+                    }
+                    else
+                    {
+                        args.Context.AddString("Usage: ct_orbit <start|stop|status> [duration] [degrees] [x y z]");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    args.Context.AddString($"ERROR: {ex.Message}");
+                }
+            });
+
+            _ = new Terminal.ConsoleCommand("ct_screenshot", "Capture a PNG screenshot. Usage: ct_screenshot [filename]", args =>
+            {
+                try
+                {
+                    string? fileName = args.Length >= 2 ? args[1] : null;
+                    args.Context.AddString($"OK: screenshot={CaptureScreenshot(fileName)}");
+                }
+                catch (Exception ex)
+                {
+                    args.Context.AddString($"ERROR: {ex.Message}");
+                }
+            });
+        }
+
         [HarmonyPatch(typeof(Terminal), nameof(Terminal.InitTerminal))]
         private static class TerminalInitPatch
         {
-            private static void Postfix()
-            {
-                _ = new Terminal.ConsoleCommand("ct_freefly", "Set camera freefly: ct_freefly <on|off|toggle|status>", args =>
-                {
-                    try
-                    {
-                        string mode = args.Length >= 2 ? args[1].ToLowerInvariant() : "status";
-                        if (mode == "on")
-                        {
-                            SetFreeFly(true);
-                        }
-                        else if (mode == "off")
-                        {
-                            SetFreeFly(false);
-                        }
-                        else if (mode == "toggle")
-                        {
-                            if (GameCamera.instance == null)
-                            {
-                                throw new InvalidOperationException("GameCamera is not ready.");
-                            }
-
-                            GameCamera.instance.ToggleFreeFly();
-                        }
-                        else if (mode != "status")
-                        {
-                            args.Context.AddString("Usage: ct_freefly <on|off|toggle|status>");
-                            return;
-                        }
-
-                        args.Context.AddString($"OK: freefly={GameCamera.InFreeFly()}");
-                    }
-                    catch (Exception ex)
-                    {
-                        args.Context.AddString($"ERROR: {ex.Message}");
-                    }
-                });
-
-                _ = new Terminal.ConsoleCommand("ct_hud", "Set HUD visibility: ct_hud <show|hide|toggle|status>", args =>
-                {
-                    try
-                    {
-                        string mode = args.Length >= 2 ? args[1].ToLowerInvariant() : "status";
-                        bool visible = !(Hud.instance != null && Hud.instance.m_userHidden);
-                        if (mode == "show")
-                        {
-                            SetHudVisible(true);
-                        }
-                        else if (mode == "hide")
-                        {
-                            SetHudVisible(false);
-                        }
-                        else if (mode == "toggle")
-                        {
-                            SetHudVisible(!visible);
-                        }
-                        else if (mode != "status")
-                        {
-                            args.Context.AddString("Usage: ct_hud <show|hide|toggle|status>");
-                            return;
-                        }
-
-                        args.Context.AddString($"OK: hudVisible={!(Hud.instance != null && Hud.instance.m_userHidden)}");
-                    }
-                    catch (Exception ex)
-                    {
-                        args.Context.AddString($"ERROR: {ex.Message}");
-                    }
-                });
-
-                _ = new Terminal.ConsoleCommand("ct_status", $"Report camera position relative to origin. Usage: ct_status [x y z], default {DefaultOriginText}", args =>
-                {
-                    try
-                    {
-                        args.Context.AddString(BuildStatus(ParseOrigin(args, 1)));
-                    }
-                    catch (Exception ex)
-                    {
-                        args.Context.AddString($"ERROR: {ex.Message}");
-                    }
-                });
-
-                _ = new Terminal.ConsoleCommand("ct_prepare", "Enable freefly and hide HUD. Usage: ct_prepare [x y z]", args =>
-                {
-                    try
-                    {
-                        SetFreeFly(true);
-                        SetHudVisible(false);
-                        args.Context.AddString("OK: camera prepared");
-                        args.Context.AddString(BuildStatus(ParseOrigin(args, 1)));
-                    }
-                    catch (Exception ex)
-                    {
-                        args.Context.AddString($"ERROR: {ex.Message}");
-                    }
-                });
-
-                _ = new Terminal.ConsoleCommand("ct_orbit", "Orbit the camera around origin. Usage: ct_orbit <start|stop|status> [duration] [degrees] [x y z]", args =>
-                {
-                    try
-                    {
-                        string mode = args.Length >= 2 ? args[1].ToLowerInvariant() : "status";
-                        if (mode == "start")
-                        {
-                            float duration = args.Length >= 3 ? ParseFloat(args[2]) : 20f;
-                            float degrees = args.Length >= 4 ? ParseFloat(args[3]) : 360f;
-                            Vector3 origin = ParseOrigin(args, 4);
-                            StartOrbit(origin, duration, degrees);
-                            args.Context.AddString($"OK: orbit started duration={duration:F2} degrees={degrees:F2} origin={Format(origin)}");
-                        }
-                        else if (mode == "stop")
-                        {
-                            StopOrbit();
-                            args.Context.AddString("OK: orbit stopped");
-                        }
-                        else if (mode == "status")
-                        {
-                            args.Context.AddString($"OK: orbiting={IsOrbiting}");
-                        }
-                        else
-                        {
-                            args.Context.AddString("Usage: ct_orbit <start|stop|status> [duration] [degrees] [x y z]");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        args.Context.AddString($"ERROR: {ex.Message}");
-                    }
-                });
-
-                _ = new Terminal.ConsoleCommand("ct_screenshot", "Capture a PNG screenshot. Usage: ct_screenshot [filename]", args =>
-                {
-                    try
-                    {
-                        string? fileName = args.Length >= 2 ? args[1] : null;
-                        args.Context.AddString($"OK: screenshot={CaptureScreenshot(fileName)}");
-                    }
-                    catch (Exception ex)
-                    {
-                        args.Context.AddString($"ERROR: {ex.Message}");
-                    }
-                });
-            }
+            private static void Postfix() => RegisterCommands();
         }
     }
 }
