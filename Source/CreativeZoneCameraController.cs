@@ -60,8 +60,8 @@ namespace cameraTools
                 _orbitHeight,
                 Mathf.Cos(angle) * _orbitRadius);
 
-            camera.transform.position = position;
-            camera.transform.rotation = Quaternion.LookRotation((_orbitOrigin - position).normalized, Vector3.up);
+            Quaternion rotation = Quaternion.LookRotation((_orbitOrigin - position).normalized, Vector3.up);
+            ApplyFreeFlyTransform(camera, position, rotation);
 
             if (t >= 1f)
             {
@@ -160,6 +160,41 @@ namespace cameraTools
             }
         }
 
+        public static void PlaceCamera(Vector3 position, Vector3 lookAt)
+        {
+            GameCamera camera = GameCamera.instance;
+            if (camera == null)
+            {
+                throw new InvalidOperationException("GameCamera is not ready.");
+            }
+
+            Vector3 lookDirection = lookAt - position;
+            if (lookDirection.sqrMagnitude < 0.001f)
+            {
+                throw new InvalidOperationException("Camera position and look target must differ.");
+            }
+
+            StopOrbit();
+            SetFreeFly(true);
+            Quaternion rotation = Quaternion.LookRotation(lookDirection.normalized, Vector3.up);
+            ApplyFreeFlyTransform(camera, position, rotation);
+        }
+
+        private static void ApplyFreeFlyTransform(GameCamera camera, Vector3 position, Quaternion rotation)
+        {
+            camera.m_freeFlyTarget = null;
+            camera.m_freeFlyLockon = null;
+            camera.m_freeFlyVel = Vector3.zero;
+            camera.m_freeFlyAcc = Vector3.zero;
+            camera.m_freeFlySavedVel = Vector3.zero;
+            camera.m_freeFlyTurnVel = Vector3.zero;
+            camera.m_freeFlyYaw = NormalizeSignedAngle(rotation.eulerAngles.y);
+            camera.m_freeFlyPitch = NormalizeSignedAngle(rotation.eulerAngles.x);
+            camera.SetFreeFlySmoothness(0f);
+            camera.transform.position = position;
+            camera.transform.rotation = rotation;
+        }
+
         public static string CaptureScreenshot(string? name)
         {
             string directory = Path.Combine(Paths.ConfigPath, "cameraTools", "screenshots");
@@ -211,6 +246,12 @@ namespace cameraTools
         {
             value %= 360f;
             return value < 0f ? value + 360f : value;
+        }
+
+        private static float NormalizeSignedAngle(float value)
+        {
+            value = NormalizeDegrees(value);
+            return value > 180f ? value - 360f : value;
         }
 
         private static string SanitizeFileName(string value)
@@ -321,6 +362,28 @@ namespace cameraTools
                     SetHudVisible(false);
                     args.Context.AddString("OK: camera prepared");
                     args.Context.AddString(BuildStatus(ParseOrigin(args, 1)));
+                }
+                catch (Exception ex)
+                {
+                    args.Context.AddString($"ERROR: {ex.Message}");
+                }
+            });
+
+            _ = new Terminal.ConsoleCommand("ct_place", "Place free camera and look at target. Usage: ct_place <cameraX cameraY cameraZ> <lookX lookY lookZ>", args =>
+            {
+                try
+                {
+                    if (args.Length < 7)
+                    {
+                        args.Context.AddString("Usage: ct_place <cameraX cameraY cameraZ> <lookX lookY lookZ>");
+                        return;
+                    }
+
+                    Vector3 position = ParseOrigin(args, 1);
+                    Vector3 lookAt = ParseOrigin(args, 4);
+                    PlaceCamera(position, lookAt);
+                    args.Context.AddString($"OK: camera={Format(position)} lookAt={Format(lookAt)}");
+                    args.Context.AddString(BuildStatus(lookAt));
                 }
                 catch (Exception ex)
                 {
