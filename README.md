@@ -1,28 +1,44 @@
-# Valheim macOS Mod Template
+# cameraTools
 
-A minimal template for creating Valheim mods with BepInEx on macOS.
+Valheim client-side camera helpers for build recording, screenshots, and replay work.
 
-## Prerequisites
+## Panel
 
-- macOS with Valheim installed via Steam
-- .NET SDK 8.0+ (`brew install dotnet`)
-- [BepInEx for macOS](https://github.com/BepInEx/BepInEx/releases) installed in Valheim
-- Publicized assemblies in `Managed/publicized_assemblies/`
+Press `F6` to open the camera tools panel. The panel can:
 
-## Quick Start
+- Toggle freefly.
+- Toggle HUD visibility.
+- Toggle player-follow-camera mode.
+- Show camera distance and angle from origin `0,0,0`.
+- Prepare the camera for capture.
+- Start or stop a 360 degree orbit.
+- Capture a PNG screenshot.
+
+## CLI Commands
+
+These commands are regular Valheim terminal commands, so they can be run through `valheimCLI`.
+
+```text
+ct_freefly <on|off|toggle|status>
+ct_hud <show|hide|toggle|status>
+ct_prepare [x y z]
+ct_status [x y z]
+ct_orbit <start|stop|status> [duration] [degrees] [x y z]
+ct_screenshot [filename]
+```
+
+If no origin is given, commands use `0,0,0`.
+
+Screenshots are written under:
+
+```text
+BepInEx/config/cameraTools/screenshots/
+```
+
+## Build
 
 ```bash
-cd Template
-./rename-mod.sh YourModName YourAuthorName
 dotnet build
 ```
 
-The built DLL will be in `bin/Debug/`. Copy it to `Valheim/BepInEx/plugins/`.
-
-## Configuration
-
-Edit `Environment.props` if your Steam library is in a non-standard location. By default it uses `$HOME/Library/Application Support/Steam/steamapps/common/Valheim`.
-
-## License
-
-MIT
+The built DLL is in `bin/Debug/`.
