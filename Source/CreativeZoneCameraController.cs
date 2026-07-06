@@ -110,9 +110,30 @@ namespace cameraTools
             Vector3 position = Vector3.LerpUnclamped(_moveStart, _moveEnd, eased);
 
             Vector3 lookDirection = _moveLookForward ? _moveEnd - _moveStart : _moveLook - position;
-            Quaternion rotation = lookDirection.sqrMagnitude > 0.0001f
-                ? Quaternion.LookRotation(lookDirection.normalized, Vector3.up)
-                : camera.transform.rotation;
+            Quaternion rotation;
+            if (lookDirection.sqrMagnitude <= 0.0001f)
+            {
+                rotation = camera.transform.rotation;
+            }
+            else
+            {
+                // Near-vertical look directions make yaw arbitrary with a world-up hint,
+                // which flips the camera when passing over the target. Use the travel
+                // direction to keep yaw locked to the flight path instead.
+                Vector3 lookHorizontal = new(lookDirection.x, 0f, lookDirection.z);
+                Vector3 up = Vector3.up;
+                if (lookHorizontal.sqrMagnitude < 0.01f)
+                {
+                    Vector3 travelHorizontal = new(_moveEnd.x - _moveStart.x, 0f, _moveEnd.z - _moveStart.z);
+                    if (travelHorizontal.sqrMagnitude > 0.0001f)
+                    {
+                        up = travelHorizontal.normalized;
+                    }
+                }
+
+                rotation = Quaternion.LookRotation(lookDirection.normalized, up);
+            }
+
             ApplyFreeFlyTransform(camera, position, rotation);
 
             if (t >= 1f)
