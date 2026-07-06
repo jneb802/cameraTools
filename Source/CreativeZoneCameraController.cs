@@ -120,11 +120,11 @@ namespace cameraTools
                 // Near-vertical look directions make yaw arbitrary with a world-up hint,
                 // which flips the camera when passing over the target. Use the travel
                 // direction to keep yaw locked to the flight path instead.
-                Vector3 lookHorizontal = new(lookDirection.x, 0f, lookDirection.z);
+                Vector3 lookHorizontal = Horizontal(lookDirection);
                 Vector3 up = Vector3.up;
                 if (lookHorizontal.sqrMagnitude < 0.01f)
                 {
-                    Vector3 travelHorizontal = new(_moveEnd.x - _moveStart.x, 0f, _moveEnd.z - _moveStart.z);
+                    Vector3 travelHorizontal = Horizontal(_moveEnd - _moveStart);
                     if (travelHorizontal.sqrMagnitude > 0.0001f)
                     {
                         up = travelHorizontal.normalized;
@@ -141,6 +141,8 @@ namespace cameraTools
                 _moving = false;
             }
         }
+
+        private static Vector3 Horizontal(Vector3 value) => new(value.x, 0f, value.z);
 
         private static float ApplyEase(float t, MoveEase ease)
         {
@@ -186,7 +188,7 @@ namespace cameraTools
 
             Vector3 position = camera.transform.position;
             Vector3 toOrigin = origin - position;
-            Vector3 horizontal = new(toOrigin.x, 0f, toOrigin.z);
+            Vector3 horizontal = Horizontal(toOrigin);
             float distance = toOrigin.magnitude;
             float horizontalDistance = horizontal.magnitude;
             float orbitAngle = Mathf.Atan2(position.x - origin.x, position.z - origin.z) * Mathf.Rad2Deg;
@@ -219,7 +221,7 @@ namespace cameraTools
             }
 
             Vector3 offset = camera.transform.position - origin;
-            Vector3 horizontal = new(offset.x, 0f, offset.z);
+            Vector3 horizontal = Horizontal(offset);
             if (horizontal.magnitude < 0.1f)
             {
                 throw new InvalidOperationException("Move the camera away from the origin before starting an orbit.");
@@ -265,8 +267,7 @@ namespace cameraTools
 
             if (lookAt == null)
             {
-                Vector3 travel = end - start;
-                Vector3 horizontal = new(travel.x, 0f, travel.z);
+                Vector3 horizontal = Horizontal(end - start);
                 if (horizontal.magnitude < 0.05f)
                 {
                     throw new InvalidOperationException("Near-vertical moves need an explicit look target.");
@@ -358,6 +359,43 @@ namespace cameraTools
                 ParseFloat(args[startIndex]),
                 ParseFloat(args[startIndex + 1]),
                 ParseFloat(args[startIndex + 2]));
+        }
+
+        private static string RunMoveStart(Terminal.ConsoleEventArgs args)
+        {
+            if (args.Length < 9)
+            {
+                return "Usage: ct_move start <duration> <startX startY startZ> <endX endY endZ> [lookX lookY lookZ] [linear|ease|in|out]";
+            }
+
+            float duration = ParseFloat(args[2]);
+            Vector3 start = ParseOrigin(args, 3);
+            Vector3 end = ParseOrigin(args, 6);
+
+            int remaining = args.Length - 9;
+            Vector3? lookAt = null;
+            string easeText = "ease";
+            if (remaining >= 3)
+            {
+                lookAt = ParseOrigin(args, 9);
+                if (remaining >= 4)
+                {
+                    easeText = args[12].ToLowerInvariant();
+                }
+            }
+            else if (remaining == 1)
+            {
+                easeText = args[9].ToLowerInvariant();
+            }
+            else if (remaining == 2)
+            {
+                return "ERROR: look target needs three values: lookX lookY lookZ";
+            }
+
+            MoveEase ease = ParseEase(easeText);
+            StartMove(start, end, lookAt, duration, ease);
+            string lookText = lookAt.HasValue ? Format(lookAt.Value) : "forward";
+            return $"OK: move started duration={duration:F2} start={Format(start)} end={Format(end)} look={lookText} ease={easeText}";
         }
 
         internal static MoveEase ParseEase(string value)
@@ -577,41 +615,7 @@ namespace cameraTools
                     string mode = args.Length >= 2 ? args[1].ToLowerInvariant() : "status";
                     if (mode == "start")
                     {
-                        if (args.Length < 9)
-                        {
-                            args.Context.AddString("Usage: ct_move start <duration> <startX startY startZ> <endX endY endZ> [lookX lookY lookZ] [linear|ease|in|out]");
-                            return;
-                        }
-
-                        float duration = ParseFloat(args[2]);
-                        Vector3 start = ParseOrigin(args, 3);
-                        Vector3 end = ParseOrigin(args, 6);
-
-                        int remaining = args.Length - 9;
-                        Vector3? lookAt = null;
-                        string easeText = "ease";
-                        if (remaining >= 3)
-                        {
-                            lookAt = ParseOrigin(args, 9);
-                            if (remaining >= 4)
-                            {
-                                easeText = args[12].ToLowerInvariant();
-                            }
-                        }
-                        else if (remaining == 1)
-                        {
-                            easeText = args[9].ToLowerInvariant();
-                        }
-                        else if (remaining == 2)
-                        {
-                            args.Context.AddString("ERROR: look target needs three values: lookX lookY lookZ");
-                            return;
-                        }
-
-                        MoveEase ease = ParseEase(easeText);
-                        StartMove(start, end, lookAt, duration, ease);
-                        string lookText = lookAt.HasValue ? Format(lookAt.Value) : "forward";
-                        args.Context.AddString($"OK: move started duration={duration:F2} start={Format(start)} end={Format(end)} look={lookText} ease={easeText}");
+                        args.Context.AddString(RunMoveStart(args));
                     }
                     else if (mode == "stop")
                     {
