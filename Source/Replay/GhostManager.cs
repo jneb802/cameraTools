@@ -136,21 +136,21 @@ namespace cameraTools.Replay
                 return;
 
             var ve = ghost.VisEquipment;
-            ve.m_leftItem = snapshot.LeftItem ?? "";
+            ve.m_leftItem = snapshot.LeftItem;
             ve.m_leftItemVariant = snapshot.LeftItemVariant;
-            ve.m_rightItem = snapshot.RightItem ?? "";
-            ve.m_chestItem = snapshot.ChestItem ?? "";
-            ve.m_legItem = snapshot.LegItem ?? "";
-            ve.m_helmetItem = snapshot.HelmetItem ?? "";
-            ve.m_shoulderItem = snapshot.ShoulderItem ?? "";
+            ve.m_rightItem = snapshot.RightItem;
+            ve.m_chestItem = snapshot.ChestItem;
+            ve.m_legItem = snapshot.LegItem;
+            ve.m_helmetItem = snapshot.HelmetItem;
+            ve.m_shoulderItem = snapshot.ShoulderItem;
             ve.m_shoulderItemVariant = snapshot.ShoulderItemVariant;
-            ve.m_utilityItem = snapshot.UtilityItem ?? "";
+            ve.m_utilityItem = snapshot.UtilityItem;
             ve.m_trinketItem = snapshot.TrinketItem ?? "";
-            ve.m_beardItem = snapshot.BeardItem ?? "";
-            ve.m_hairItem = snapshot.HairItem ?? "";
-            ve.m_leftBackItem = snapshot.LeftBackItem ?? "";
+            ve.m_beardItem = snapshot.BeardItem;
+            ve.m_hairItem = snapshot.HairItem;
+            ve.m_leftBackItem = snapshot.LeftBackItem;
             ve.m_leftBackItemVariant = snapshot.LeftBackItemVariant;
-            ve.m_rightBackItem = snapshot.RightBackItem ?? "";
+            ve.m_rightBackItem = snapshot.RightBackItem;
         }
 
         public void FireTrigger(long userID, uint objectID, string triggerName)
