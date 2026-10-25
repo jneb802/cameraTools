@@ -2,6 +2,7 @@ using System;
 using System.Globalization;
 using System.IO;
 using BepInEx;
+using cameraTools.Markers;
 using HarmonyLib;
 using UnityEngine;
 
@@ -228,6 +229,8 @@ namespace cameraTools
             }
 
             StopMove();
+            PathPlayer.Stop();
+            MarkerVisibility.HideForCapture();
             SetFreeFly(true);
             _instance._orbitOrigin = origin;
             _instance._orbitRadius = horizontal.magnitude;
@@ -275,6 +278,8 @@ namespace cameraTools
             }
 
             StopOrbit();
+            PathPlayer.Stop();
+            MarkerVisibility.HideForCapture();
             SetFreeFly(true);
             _instance._moveStart = start;
             _instance._moveEnd = end;
@@ -310,9 +315,28 @@ namespace cameraTools
 
             StopOrbit();
             StopMove();
+            PathPlayer.Stop();
             SetFreeFly(true);
             Quaternion rotation = Quaternion.LookRotation(lookDirection.normalized, Vector3.up);
             ApplyFreeFlyTransform(camera, position, rotation);
+        }
+
+        internal static void ApplyExternalTransform(Vector3 position, Quaternion rotation)
+        {
+            GameCamera camera = GameCamera.instance;
+            if (camera == null)
+            {
+                return;
+            }
+
+            _instance?.StopLocalMotion();
+            ApplyFreeFlyTransform(camera, position, rotation);
+        }
+
+        private void StopLocalMotion()
+        {
+            _moving = false;
+            _orbiting = false;
         }
 
         private static void ApplyFreeFlyTransform(GameCamera camera, Vector3 position, Quaternion rotation)
@@ -544,6 +568,7 @@ namespace cameraTools
                 {
                     SetFreeFly(true);
                     SetHudVisible(false);
+                    MarkerVisibility.HideForCapture();
                     args.Context.AddString("OK: camera prepared");
                     args.Context.AddString(BuildStatus(ParseOrigin(args, 1)));
                 }

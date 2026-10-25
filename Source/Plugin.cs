@@ -4,6 +4,7 @@ using System.Reflection;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
+using cameraTools.Markers;
 using cameraTools.Replay;
 using HarmonyLib;
 using UnityEngine;
@@ -14,7 +15,7 @@ namespace cameraTools
     public class cameraToolsPlugin : BaseUnityPlugin
     {
         private const string ModName = "cameraTools";
-        private const string ModVersion = "1.0.1";
+        private const string ModVersion = "1.1.0";
         private const string Author = "modAuthorName";
         private const string ModGUID = Author + "." + ModName;
         private static string ConfigFileName = ModGUID + ".cfg";
@@ -34,6 +35,8 @@ namespace cameraTools
             DefaultSmoothness = Config.Bind("Camera", "DefaultSmoothness", 0.5f,
                 new ConfigDescription("Default free fly smoothness", new AcceptableValueRange<float>(0f, 1f)));
 
+            MarkerMode.BindConfig(Config);
+
             Assembly assembly = Assembly.GetExecutingAssembly();
             HarmonyInstance.PatchAll(assembly);
             SetupWatcher();
@@ -43,8 +46,12 @@ namespace cameraTools
             gameObject.AddComponent<ReplayRecorder>();
             gameObject.AddComponent<ReplayPlayer>();
             gameObject.AddComponent<ReplayTimelinePanel>();
+            gameObject.AddComponent<MarkerMode>();
+            gameObject.AddComponent<MarkerRenderer>();
+            gameObject.AddComponent<PathPlayer>();
             CreativeZoneCameraController.RegisterCommands();
             ReplayCommands.Register();
+            MarkerCommands.Register();
         }
 
         private void OnDestroy()
