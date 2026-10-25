@@ -140,7 +140,9 @@ namespace cameraTools.Markers
         {
             if (marker.CachedOutline == null || Time.time - marker.CacheTime > 2f)
             {
-                marker.CachedOutline = BuildOutline(marker.position, marker.Shape, marker.radius, marker.width, marker.depth, marker.rotation);
+                marker.CachedOutline = marker.Shape == AreaShape.Polygon
+                    ? BuildPolygonOutline(marker.vertices)
+                    : BuildOutline(marker.position, marker.Shape, marker.radius, marker.width, marker.depth, marker.rotation);
                 marker.CacheTime = Time.time;
             }
 
@@ -198,6 +200,24 @@ namespace cameraTools.Markers
                     {
                         points.Add(SnapToGround(Vector3.Lerp(a, b, (float)s / steps)));
                     }
+                }
+            }
+
+            return points;
+        }
+
+        public static List<Vector3> BuildPolygonOutline(List<Vector3> vertices)
+        {
+            List<Vector3> points = new();
+            int n = vertices.Count;
+            for (int c = 0; c < n; c++)
+            {
+                Vector3 a = vertices[c];
+                Vector3 b = vertices[(c + 1) % n];
+                int steps = Mathf.Clamp(Mathf.RoundToInt(Vector3.Distance(a, b) / 1.5f), 1, 48);
+                for (int s = 0; s < steps; s++)
+                {
+                    points.Add(SnapToGround(Vector3.Lerp(a, b, (float)s / steps)));
                 }
             }
 

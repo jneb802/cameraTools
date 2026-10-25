@@ -21,7 +21,7 @@ namespace cameraTools.Markers
             _registered = true;
 
             _ = new Terminal.ConsoleCommand("ct_mark",
-                "Markers: ct_mark <list [kind]|show|hide|auto|mode on|off|export|reload|clear [kind]|remove <id|label>|goto <id|label>|shot <label>|point <label> [x y z]>",
+                "Markers: ct_mark <list [kind|all]|build [list|new <name>|use <id|name>]|panel|show|hide|auto|mode on|off|export|reload|clear [kind]|remove <id|label>|goto <id|label>|shot <label>|point <label> [x y z]>",
                 args =>
                 {
                     try
@@ -57,12 +57,38 @@ namespace cameraTools.Markers
             {
                 case "list":
                 {
-                    MarkerKind? kind = args.Length >= 3 ? Marker.ParseKind(args[2]) : null;
-                    List<Marker> items = kind == null ? MarkerStore.Markers : MarkerStore.Markers.Where(m => m.Kind == kind.Value).ToList();
-                    List<string> lines = new() { $"OK: count={items.Count} world={MarkerStore.WorldName} file={MarkerStore.FilePath}" };
+                    bool all = args.Length >= 3 && args[2].ToLowerInvariant() == "all";
+                    MarkerKind? kind = args.Length >= 3 && !all ? Marker.ParseKind(args[2]) : null;
+                    List<Marker> source = all ? MarkerStore.AllMarkers : MarkerStore.Markers;
+                    List<Marker> items = kind == null ? source : source.Where(m => m.Kind == kind.Value).ToList();
+                    List<string> lines = new() { $"OK: count={items.Count} build=\"{MarkerStore.ActiveBuild.name}\" world={MarkerStore.WorldName} file={MarkerStore.FilePath}" };
                     lines.AddRange(items.Select(m => m.Describe()));
                     return string.Join("\n", lines);
                 }
+                case "build":
+                {
+                    string sub = args.Length >= 3 ? args[2].ToLowerInvariant() : "list";
+                    if (sub == "new")
+                    {
+                        Build created = MarkerStore.NewBuild(JoinLabel(args, 3));
+                        return $"OK: build {created.id} \"{created.name}\" created and active";
+                    }
+
+                    if (sub == "use")
+                    {
+                        Build? target = MarkerStore.FindBuild(JoinLabel(args, 3));
+                        if (target == null) return $"ERROR: no build matches '{JoinLabel(args, 3)}'";
+                        MarkerStore.UseBuild(target);
+                        return $"OK: active build {target.id} \"{target.name}\" ({MarkerStore.Markers.Count} markers)";
+                    }
+
+                    List<string> lines = new() { $"OK: count={MarkerStore.Builds.Count} active={MarkerStore.ActiveBuild.id}" };
+                    lines.AddRange(MarkerStore.Builds.Select(b => $"{b.id} \"{b.name}\" markers={MarkerStore.AllMarkers.Count(m => m.build == b.id)}{(b.id == MarkerStore.ActiveBuild.id ? " (active)" : "")}"));
+                    return string.Join("\n", lines);
+                }
+                case "panel":
+                    MarkerPanel.Open();
+                    return "OK: marker panel opened";
                 case "show":
                     MarkerVisibility.Mode = MarkerVisibilityMode.Show;
                     return "OK: markers shown";
@@ -236,7 +262,7 @@ namespace cameraTools.Markers
             return args.Length > index ? string.Join(" ", args.Args.Skip(index)) : "";
         }
 
-        private static void GoTo(Marker marker)
+        public static void GoTo(Marker marker)
         {
             switch (marker.Kind)
             {

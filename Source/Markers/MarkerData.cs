@@ -17,7 +17,17 @@ namespace cameraTools.Markers
     public enum AreaShape
     {
         Circle,
-        Rectangle
+        Rectangle,
+        Polygon
+    }
+
+    [Serializable]
+    [JsonObject(MemberSerialization.Fields)]
+    public class Build
+    {
+        public string id = "";
+        public string name = "";
+        public string created = "";
     }
 
     [Serializable]
@@ -43,6 +53,7 @@ namespace cameraTools.Markers
         public string note = "";
         public string tag = "";
         public string created = "";
+        public string build = "";
 
         // Area and Point
         public Vector3 position;
@@ -53,6 +64,7 @@ namespace cameraTools.Markers
         public float width = 10f;
         public float depth = 10f;
         public float rotation;
+        public List<Vector3> vertices = new();
 
         // Shot
         public Vector3 cameraPosition;
@@ -73,8 +85,21 @@ namespace cameraTools.Markers
 
         public AreaShape Shape
         {
-            get => string.Equals(shape, "rectangle", StringComparison.OrdinalIgnoreCase) ? AreaShape.Rectangle : AreaShape.Circle;
-            set => shape = value == AreaShape.Rectangle ? "rectangle" : "circle";
+            get
+            {
+                if (string.Equals(shape, "rectangle", StringComparison.OrdinalIgnoreCase)) return AreaShape.Rectangle;
+                if (string.Equals(shape, "polygon", StringComparison.OrdinalIgnoreCase)) return AreaShape.Polygon;
+                return AreaShape.Circle;
+            }
+            set => shape = value == AreaShape.Rectangle ? "rectangle" : value == AreaShape.Polygon ? "polygon" : "circle";
+        }
+
+        public static Vector3 Centroid(List<Vector3> points)
+        {
+            if (points.Count == 0) return Vector3.zero;
+            Vector3 sum = Vector3.zero;
+            foreach (Vector3 v in points) sum += v;
+            return sum / points.Count;
         }
 
         public Vector3 Anchor
@@ -131,9 +156,12 @@ namespace cameraTools.Markers
             switch (Kind)
             {
                 case MarkerKind.Area:
-                    string size = Shape == AreaShape.Circle
-                        ? $"r={radius.ToString("F1", ci)}"
-                        : $"w={width.ToString("F1", ci)} d={depth.ToString("F1", ci)} rot={rotation.ToString("F0", ci)}";
+                    string size = Shape switch
+                    {
+                        AreaShape.Circle => $"r={radius.ToString("F1", ci)}",
+                        AreaShape.Polygon => $"vertices={vertices.Count}",
+                        _ => $"w={width.ToString("F1", ci)} d={depth.ToString("F1", ci)} rot={rotation.ToString("F0", ci)}"
+                    };
                     return $"{head} {shape} pos={Fmt(position)} {size} tag={tag}";
                 case MarkerKind.Shot:
                     return $"{head} cam={Fmt(cameraPosition)} look={Fmt(cameraPosition + lookDirection.normalized * 10f)}";
@@ -213,6 +241,8 @@ namespace cameraTools.Markers
         public int version = 1;
         public string world = "";
         public string updated = "";
+        public string activeBuild = "";
+        public List<Build> builds = new();
         public List<Marker> markers = new();
     }
 }

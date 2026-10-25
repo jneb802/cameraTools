@@ -6,18 +6,58 @@ using UnityEngine;
 
 namespace cameraTools.Markers
 {
+    /// <summary>Receives the label typed into Valheim's own text dialog.</summary>
+    public class MarkerLabelReceiver : TextReceiver
+    {
+        private readonly Marker _marker;
+
+        public MarkerLabelReceiver(Marker marker)
+        {
+            _marker = marker;
+        }
+
+        public string GetText() => _marker.label;
+
+        public void SetText(string text)
+        {
+            _marker.label = string.IsNullOrWhiteSpace(text) ? _marker.label : text.Trim();
+            MarkerStore.Save();
+        }
+    }
+
+    public class WaypointHoldReceiver : TextReceiver
+    {
+        private readonly Marker _marker;
+        private readonly int _index;
+
+        public WaypointHoldReceiver(Marker marker, int index)
+        {
+            _marker = marker;
+            _index = index;
+        }
+
+        public string GetText() => _marker.waypoints[_index].hold.ToString("F1", CultureInfo.InvariantCulture);
+
+        public void SetText(string text)
+        {
+            if (float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out float hold))
+            {
+                _marker.waypoints[_index].hold = Mathf.Clamp(hold, 0f, 30f);
+                MarkerStore.Save();
+            }
+        }
+    }
+
     public class MarkerMode : MonoBehaviour
     {
         private static MarkerMode? _instance;
         private static readonly int PlaceMask = LayerMask.GetMask("Default", "static_solid", "Default_small", "piece", "piece_nonsolid", "terrain", "vehicle");
-        private static readonly string[] AreaTags = { "room", "exterior", "courtyard", "detail", "hero", "entrance", "other" };
-        private const int EditWindowId = 98241;
-        private const int StatusWindowId = 98242;
+        public static readonly string[] AreaTags = { "room", "exterior", "courtyard", "detail", "hero", "entrance", "other" };
 
         public static ConfigEntry<KeyboardShortcut> ToggleKey = null!;
         public static ConfigEntry<KeyboardShortcut> CycleToolKey = null!;
         public static ConfigEntry<KeyboardShortcut> ShapeKey = null!;
-        public static ConfigEntry<KeyboardShortcut> FinishPathKey = null!;
+        public static ConfigEntry<KeyboardShortcut> FinishKey = null!;
         public static ConfigEntry<KeyboardShortcut> RecordPathKey = null!;
         public static ConfigEntry<KeyboardShortcut> EditKey = null!;
         public static ConfigEntry<KeyboardShortcut> DeleteKey = null!;
@@ -25,13 +65,26 @@ namespace cameraTools.Markers
         public static ConfigEntry<float> EyeHeight = null!;
 
         public static bool Active { get; private set; }
-        public static bool IsEditing => _instance != null && _instance._editing != null;
+        public static bool IsEditing => false;
         public static Marker? Hovered => _instance?._hovered;
         public static int HoveredWaypoint => _instance?._hoveredWaypoint ?? -1;
         public static Marker? Highlighted;
+        public static Marker? Selected;
+
+        public static MarkerKind Tool
+        {
+            get => _instance?._tool ?? MarkerKind.Area;
+            set { if (_instance != null) _instance.SetTool(value); }
+        }
+
+        public static AreaShape Shape
+        {
+            get => _instance?._shape ?? AreaShape.Circle;
+            set { if (_instance != null) { _instance._shape = value; _instance._previewOutline = null; } }
+        }
 
         public static bool BlockPlayerActions => Active && !GameCamera.InFreeFly();
-        public static bool ConsumeScroll => Active && !IsEditing && _instance != null && _instance._tool == MarkerKind.Area && !UiBlocked();
+        public static bool ConsumeScroll => Active && _instance != null && _instance._tool == MarkerKind.Area && _instance._shape != AreaShape.Polygon && !UiBlocked();
 
         private MarkerKind _tool = MarkerKind.Area;
         private AreaShape _shape = AreaShape.Circle;
@@ -45,19 +98,13 @@ namespace cameraTools.Markers
         private float _previewOutlineTime;
 
         private readonly List<Waypoint> _draft = new();
+        private readonly List<Vector3> _polygonDraft = new();
         private bool _recording;
         private float _lastSampleTime;
 
         private Marker? _hovered;
         private int _hoveredWaypoint = -1;
 
-        private Marker? _editing;
-        private int _editingWaypoint = -1;
-        private string _editLabel = "";
-        private string _editNote = "";
-        private string _editHold = "0";
-        private Rect _editRect;
-        private bool _focusLabel;
         private string _flash = "";
         private float _flashUntil;
 
@@ -65,11 +112,11 @@ namespace cameraTools.Markers
         {
             ToggleKey = config.Bind("Markers", "ToggleKey", new KeyboardShortcut(KeyCode.F7), "Toggle marker mode");
             CycleToolKey = config.Bind("Markers", "CycleToolKey", new KeyboardShortcut(KeyCode.T), "Cycle marker tool: area, point, shot, path");
-            ShapeKey = config.Bind("Markers", "ShapeKey", new KeyboardShortcut(KeyCode.R), "Cycle area shape: circle, rectangle");
-            FinishPathKey = config.Bind("Markers", "FinishPathKey", new KeyboardShortcut(KeyCode.F), "Finish the path being drawn");
+            ShapeKey = config.Bind("Markers", "ShapeKey", new KeyboardShortcut(KeyCode.R), "Cycle area shape: circle, rectangle, polygon");
+            FinishKey = config.Bind("Markers", "FinishKey", new KeyboardShortcut(KeyCode.F), "Finish the path or polygon being drawn");
             RecordPathKey = config.Bind("Markers", "RecordPathKey", new KeyboardShortcut(KeyCode.G), "Start or stop live path recording");
-            EditKey = config.Bind("Markers", "EditKey", new KeyboardShortcut(KeyCode.E), "Edit the marker under the crosshair");
-            DeleteKey = config.Bind("Markers", "DeleteKey", new KeyboardShortcut(KeyCode.Delete), "Delete the marker under the crosshair, or the last draft waypoint");
+            EditKey = config.Bind("Markers", "EditKey", new KeyboardShortcut(KeyCode.E), "Rename the marker under the crosshair (or set a waypoint hold)");
+            DeleteKey = config.Bind("Markers", "DeleteKey", new KeyboardShortcut(KeyCode.Delete), "Delete the marker under the crosshair, or the last draft point");
             RecordInterval = config.Bind("Markers", "RecordInterval", 0.5f, "Seconds between samples when live-recording a path");
             EyeHeight = config.Bind("Markers", "EyeHeight", 1.7f, "Camera height above the feet when a path waypoint is placed while walking");
         }
@@ -77,7 +124,6 @@ namespace cameraTools.Markers
         private void Awake()
         {
             _instance = this;
-            _editRect = new Rect(Screen.width / 2f - 220f, Screen.height / 2f - 140f, 440f, 280f);
         }
 
         private void OnDestroy()
@@ -103,10 +149,25 @@ namespace cameraTools.Markers
             }
             else
             {
-                _instance.CancelEdit();
                 _instance._recording = false;
                 _instance._hovered = null;
             }
+        }
+
+        private void SetTool(MarkerKind tool)
+        {
+            if (_tool == MarkerKind.Path && tool != MarkerKind.Path && (_recording || _draft.Count > 0))
+            {
+                FinishPath();
+            }
+
+            if (_tool == MarkerKind.Area && tool != MarkerKind.Area && _polygonDraft.Count > 0)
+            {
+                FinishPolygon();
+            }
+
+            _tool = tool;
+            _previewOutline = null;
         }
 
         public static bool UiBlocked()
@@ -137,7 +198,7 @@ namespace cameraTools.Markers
                 return;
             }
 
-            if (ToggleKey.Value.IsDown() && !UiBlocked() && _editing == null)
+            if (ToggleKey.Value.IsDown() && !UiBlocked())
             {
                 SetActive(false);
                 Flash("Marker mode off");
@@ -145,7 +206,7 @@ namespace cameraTools.Markers
             }
 
             MarkerStore.EnsureLoaded();
-            if (_editing != null || UiBlocked())
+            if (UiBlocked())
             {
                 return;
             }
@@ -160,22 +221,22 @@ namespace cameraTools.Markers
 
             if (CycleToolKey.Value.IsDown())
             {
-                _tool = (MarkerKind)(((int)_tool + 1) % 4);
-                if (_tool != MarkerKind.Path && (_recording || _draft.Count > 0))
-                {
-                    FinishPath();
-                }
-
+                SetTool((MarkerKind)(((int)_tool + 1) % 4));
                 Flash($"Tool: {_tool}");
             }
 
             if (ShapeKey.Value.IsDown() && _tool == MarkerKind.Area)
             {
-                _shape = _shape == AreaShape.Circle ? AreaShape.Rectangle : AreaShape.Circle;
+                if (_polygonDraft.Count > 0)
+                {
+                    FinishPolygon();
+                }
+
+                _shape = (AreaShape)(((int)_shape + 1) % 3);
                 _previewOutline = null;
             }
 
-            if (_tool == MarkerKind.Area)
+            if (_tool == MarkerKind.Area && _shape != AreaShape.Polygon)
             {
                 float scroll = ZInput.m_instance != null ? ZInput.m_instance.Internal_GetMouseScrollWheel() : 0f;
                 if (Mathf.Abs(scroll) > 0.0001f)
@@ -211,38 +272,18 @@ namespace cameraTools.Markers
 
             if (EditKey.Value.IsDown() && _hovered != null)
             {
-                BeginEdit(_hovered, _hoveredWaypoint);
+                Rename(_hovered, _hoveredWaypoint);
             }
 
             if (DeleteKey.Value.IsDown())
             {
-                if (_tool == MarkerKind.Path && _draft.Count > 0)
-                {
-                    _draft.RemoveAt(_draft.Count - 1);
-                    Flash($"Draft waypoint removed ({_draft.Count} left)");
-                }
-                else if (_hovered != null)
-                {
-                    if (_hovered.Kind == MarkerKind.Path && _hoveredWaypoint >= 0 && _hovered.waypoints.Count > 2)
-                    {
-                        _hovered.waypoints.RemoveAt(_hoveredWaypoint);
-                        _hovered.InvalidateCache();
-                        MarkerStore.Save();
-                        Flash($"Waypoint {_hoveredWaypoint + 1} removed from \"{_hovered.label}\"");
-                    }
-                    else
-                    {
-                        string label = _hovered.label;
-                        MarkerStore.Remove(_hovered);
-                        _hovered = null;
-                        Flash($"Removed \"{label}\"");
-                    }
-                }
+                HandleDelete();
             }
 
-            if (FinishPathKey.Value.IsDown() && _tool == MarkerKind.Path)
+            if (FinishKey.Value.IsDown())
             {
-                FinishPath();
+                if (_tool == MarkerKind.Path) FinishPath();
+                else if (_tool == MarkerKind.Area && _shape == AreaShape.Polygon) FinishPolygon();
             }
 
             if (RecordPathKey.Value.IsDown() && _tool == MarkerKind.Path)
@@ -260,6 +301,44 @@ namespace cameraTools.Markers
             }
         }
 
+        private void HandleDelete()
+        {
+            if (_tool == MarkerKind.Path && _draft.Count > 0)
+            {
+                _draft.RemoveAt(_draft.Count - 1);
+                Flash($"Draft waypoint removed ({_draft.Count} left)");
+                return;
+            }
+
+            if (_tool == MarkerKind.Area && _polygonDraft.Count > 0)
+            {
+                _polygonDraft.RemoveAt(_polygonDraft.Count - 1);
+                Flash($"Polygon vertex removed ({_polygonDraft.Count} left)");
+                return;
+            }
+
+            if (_hovered == null)
+            {
+                return;
+            }
+
+            if (_hovered.Kind == MarkerKind.Path && _hoveredWaypoint >= 0 && _hovered.waypoints.Count > 2)
+            {
+                _hovered.waypoints.RemoveAt(_hoveredWaypoint);
+                _hovered.InvalidateCache();
+                MarkerStore.Save();
+                Flash($"Waypoint {_hoveredWaypoint + 1} removed from \"{_hovered.label}\"");
+            }
+            else
+            {
+                string label = _hovered.label;
+                MarkerStore.Remove(_hovered);
+                if (Selected == _hovered) Selected = null;
+                _hovered = null;
+                Flash($"Removed \"{label}\"");
+            }
+        }
+
         private Transform CameraTransform => GameCamera.instance.transform;
 
         private void UpdatePreviewPoint()
@@ -271,7 +350,7 @@ namespace cameraTools.Markers
                 _previewPoint = hit.point;
             }
 
-            if (_tool == MarkerKind.Area && _hasPreviewPoint && (_previewOutline == null || Time.time - _previewOutlineTime > 0.15f))
+            if (_tool == MarkerKind.Area && _shape != AreaShape.Polygon && _hasPreviewPoint && (_previewOutline == null || Time.time - _previewOutlineTime > 0.15f))
             {
                 _previewOutline = MarkerRenderer.BuildOutline(_previewPoint, _shape, _radius, _width, _depth, _rotation);
                 _previewOutlineTime = Time.time;
@@ -339,7 +418,22 @@ namespace cameraTools.Markers
                 case MarkerKind.Area:
                     if (!_hasPreviewPoint)
                     {
-                        Flash("Nothing under the crosshair to place an area on");
+                        Flash("Nothing under the crosshair to place on");
+                        return;
+                    }
+
+                    if (_shape == AreaShape.Polygon)
+                    {
+                        if (_polygonDraft.Count >= 3 && Vector3.Distance(_polygonDraft[0], _previewPoint) < 1.5f)
+                        {
+                            FinishPolygon();
+                            return;
+                        }
+
+                        _polygonDraft.Add(_previewPoint);
+                        Flash(_polygonDraft.Count >= 3
+                            ? $"Vertex {_polygonDraft.Count}; click the first vertex or press {FinishKey.Value.MainKey} to close"
+                            : $"Vertex {_polygonDraft.Count}");
                         return;
                     }
 
@@ -354,34 +448,53 @@ namespace cameraTools.Markers
                         rotation = _rotation,
                         tag = "room"
                     };
-                    MarkerStore.Add(area);
-                    BeginEdit(area, -1);
+                    Commit(area, "Area name");
                     break;
                 case MarkerKind.Point:
                     if (!_hasPreviewPoint)
                     {
-                        Flash("Nothing under the crosshair to place a point on");
+                        Flash("Nothing under the crosshair to place on");
                         return;
                     }
 
-                    Marker point = new() { Kind = MarkerKind.Point, position = _previewPoint };
-                    MarkerStore.Add(point);
-                    BeginEdit(point, -1);
+                    Commit(new Marker { Kind = MarkerKind.Point, position = _previewPoint }, "Point name");
                     break;
                 case MarkerKind.Shot:
-                    Marker shot = new()
+                    Commit(new Marker
                     {
                         Kind = MarkerKind.Shot,
                         cameraPosition = CameraTransform.position,
                         lookDirection = CameraTransform.forward
-                    };
-                    MarkerStore.Add(shot);
-                    BeginEdit(shot, -1);
+                    }, "Shot name");
                     break;
                 case MarkerKind.Path:
                     SampleWaypoint(true);
                     break;
             }
+        }
+
+        private void Commit(Marker marker, string topic)
+        {
+            MarkerStore.Add(marker);
+            Selected = marker;
+            Flash($"Added {marker.kind} \"{marker.label}\"");
+            Rename(marker, -1, topic);
+        }
+
+        public static void Rename(Marker marker, int waypoint, string? topic = null)
+        {
+            if (TextInput.instance == null)
+            {
+                return;
+            }
+
+            if (waypoint >= 0 && waypoint < marker.waypoints.Count)
+            {
+                TextInput.instance.RequestText(new WaypointHoldReceiver(marker, waypoint), $"Hold seconds at waypoint {waypoint + 1} of \"{marker.label}\"", 6);
+                return;
+            }
+
+            TextInput.instance.RequestText(new MarkerLabelReceiver(marker), topic ?? $"Rename {marker.kind}", 60);
         }
 
         private void SampleWaypoint(bool manual)
@@ -429,52 +542,75 @@ namespace cameraTools.Markers
             Marker path = new() { Kind = MarkerKind.Path, waypoints = new List<Waypoint>(_draft) };
             path.position = path.waypoints[0].position;
             _draft.Clear();
-            MarkerStore.Add(path);
-            BeginEdit(path, -1);
+            Commit(path, "Path name");
         }
 
-        private void BeginEdit(Marker marker, int waypoint)
+        private void FinishPolygon()
         {
-            _editing = marker;
-            _editingWaypoint = waypoint;
-            _editLabel = marker.label;
-            _editNote = marker.note;
-            _editHold = waypoint >= 0 && waypoint < marker.waypoints.Count
-                ? marker.waypoints[waypoint].hold.ToString("F1", CultureInfo.InvariantCulture)
-                : "0";
-            _focusLabel = true;
-        }
-
-        private void CancelEdit()
-        {
-            _editing = null;
-            _editingWaypoint = -1;
-        }
-
-        private void SaveEdit()
-        {
-            if (_editing == null)
+            if (_polygonDraft.Count < 3)
             {
+                _polygonDraft.Clear();
+                Flash("Polygon discarded: needs at least three vertices");
                 return;
             }
 
-            _editing.label = _editLabel.Trim();
-            _editing.note = _editNote.Trim();
-            if (_editingWaypoint >= 0 && _editingWaypoint < _editing.waypoints.Count &&
-                float.TryParse(_editHold, NumberStyles.Float, CultureInfo.InvariantCulture, out float hold))
+            Marker area = new()
             {
-                _editing.waypoints[_editingWaypoint].hold = Mathf.Clamp(hold, 0f, 30f);
-            }
-
-            MarkerStore.Save();
-            Flash($"Saved \"{_editing.label}\"");
-            CancelEdit();
+                Kind = MarkerKind.Area,
+                Shape = AreaShape.Polygon,
+                vertices = new List<Vector3>(_polygonDraft),
+                tag = "room"
+            };
+            area.position = Marker.Centroid(area.vertices);
+            _polygonDraft.Clear();
+            Commit(area, "Area name");
         }
 
-        private void Flash(string text)
+        public static void Flash(string text)
         {
-            _flash = text;
-            _flashUntil = Time.time + 3f;
+            if (_instance == null) return;
+            _instance._flash = text;
+            _instance._flashUntil = Time.time + 3f;
+        }
+
+        public static string StatusLine1()
+        {
+            if (_instance == null) return "";
+            MarkerMode m = _instance;
+            CultureInfo ci = CultureInfo.InvariantCulture;
+            switch (m._tool)
+            {
+                case MarkerKind.Area:
+                    return m._shape switch
+                    {
+                        AreaShape.Circle => $"AREA circle r={m._radius.ToString("F0", ci)}   scroll: radius   ctrl+scroll: rotate   {ShapeKey.Value.MainKey}: shape",
+                        AreaShape.Rectangle => $"AREA rect {m._width.ToString("F0", ci)}x{m._depth.ToString("F0", ci)} rot={m._rotation.ToString("F0", ci)}   scroll: width   shift+scroll: depth   ctrl+scroll: rotate   {ShapeKey.Value.MainKey}: shape",
+                        _ => $"AREA polygon {m._polygonDraft.Count} vertices   click: add vertex   click first vertex or {FinishKey.Value.MainKey}: close   {DeleteKey.Value.MainKey}: undo   {ShapeKey.Value.MainKey}: shape"
+                    };
+                case MarkerKind.Point:
+                    return "POINT   click: place under crosshair";
+                case MarkerKind.Shot:
+                    return "SHOT   click: save this camera view";
+                default:
+                    return $"PATH {m._draft.Count} pts{(m._recording ? "  REC" : "")}   click: waypoint   {RecordPathKey.Value.MainKey}: record   {FinishKey.Value.MainKey}: finish   {DeleteKey.Value.MainKey}: undo";
+            }
+        }
+
+        public static string StatusLine2()
+        {
+            if (_instance == null) return "";
+            MarkerMode m = _instance;
+            if (Time.time < m._flashUntil)
+            {
+                return m._flash;
+            }
+
+            if (m._hovered != null)
+            {
+                return $"looking at {m._hovered.kind} \"{m._hovered.label}\"{(m._hoveredWaypoint >= 0 ? $" wp {m._hoveredWaypoint + 1}" : "")}   {EditKey.Value.MainKey}: rename   {DeleteKey.Value.MainKey}: delete";
+            }
+
+            return $"{MarkerStore.ActiveBuild.name}: {MarkerStore.Markers.Count} markers   {CycleToolKey.Value.MainKey}: next tool   {ToggleKey.Value.MainKey}: exit   Tab: panel";
         }
 
         public static void DrawPreview(float alpha)
@@ -490,7 +626,36 @@ namespace cameraTools.Markers
             switch (m._tool)
             {
                 case MarkerKind.Area:
-                    if (m._hasPreviewPoint && m._previewOutline != null)
+                    if (m._shape == AreaShape.Polygon)
+                    {
+                        Color poly = MarkerRenderer.AreaColor;
+                        poly.a *= alpha;
+                        for (int i = 0; i < m._polygonDraft.Count; i++)
+                        {
+                            MarkerRenderer.DrawPost(m._polygonDraft[i], poly, 1.2f);
+                            if (i > 0)
+                            {
+                                MarkerRenderer.Line(m._polygonDraft[i - 1] + Vector3.up * 0.1f, m._polygonDraft[i] + Vector3.up * 0.1f, poly);
+                            }
+                        }
+
+                        if (m._polygonDraft.Count > 0 && m._hasPreviewPoint)
+                        {
+                            MarkerRenderer.Line(m._polygonDraft[m._polygonDraft.Count - 1] + Vector3.up * 0.1f, m._previewPoint + Vector3.up * 0.1f, color);
+                            if (m._polygonDraft.Count >= 2)
+                            {
+                                Color faint = poly;
+                                faint.a *= 0.4f;
+                                MarkerRenderer.Line(m._previewPoint + Vector3.up * 0.1f, m._polygonDraft[0] + Vector3.up * 0.1f, faint);
+                            }
+                        }
+
+                        if (m._hasPreviewPoint)
+                        {
+                            MarkerRenderer.DrawCross(m._previewPoint + Vector3.up * 0.1f, color, 0.5f);
+                        }
+                    }
+                    else if (m._hasPreviewPoint && m._previewOutline != null)
                     {
                         MarkerRenderer.DrawOutline(m._previewOutline, color);
                         MarkerRenderer.DrawCross(m._previewPoint + Vector3.up * 0.2f, color, 0.6f);
@@ -515,155 +680,6 @@ namespace cameraTools.Markers
 
                     break;
             }
-        }
-
-        private void OnGUI()
-        {
-            if (!Active || Player.m_localPlayer == null)
-            {
-                return;
-            }
-
-            DrawStatus();
-            if (_editing != null)
-            {
-                _editRect = GUILayout.Window(EditWindowId, _editRect, DrawEditWindow, EditTitle());
-            }
-        }
-
-        private string EditTitle()
-        {
-            if (_editing == null)
-            {
-                return "Marker";
-            }
-
-            string title = $"{_editing.kind}: {_editing.id}";
-            if (_editingWaypoint >= 0)
-            {
-                title += $"  waypoint {_editingWaypoint + 1}/{_editing.waypoints.Count}";
-            }
-
-            return title;
-        }
-
-        private void DrawStatus()
-        {
-            CultureInfo ci = CultureInfo.InvariantCulture;
-            string tool;
-            switch (_tool)
-            {
-                case MarkerKind.Area:
-                    tool = _shape == AreaShape.Circle
-                        ? $"AREA circle r={_radius.ToString("F0", ci)}   scroll: radius   ctrl+scroll: rotate   {ShapeKey.Value.MainKey}: shape"
-                        : $"AREA rect {_width.ToString("F0", ci)}x{_depth.ToString("F0", ci)} rot={_rotation.ToString("F0", ci)}   scroll: width   shift+scroll: depth   ctrl+scroll: rotate   {ShapeKey.Value.MainKey}: shape";
-                    break;
-                case MarkerKind.Point:
-                    tool = "POINT   click: place under crosshair";
-                    break;
-                case MarkerKind.Shot:
-                    tool = "SHOT   click: save this camera view";
-                    break;
-                default:
-                    tool = $"PATH {_draft.Count} pts{(_recording ? "  REC" : "")}   click: waypoint   {RecordPathKey.Value.MainKey}: record   {FinishPathKey.Value.MainKey}: finish   {DeleteKey.Value.MainKey}: undo";
-                    break;
-            }
-
-            string hover = _hovered != null
-                ? $"looking at: {_hovered.kind} \"{_hovered.label}\"{(_hoveredWaypoint >= 0 ? $" wp {_hoveredWaypoint + 1}" : "")}   {EditKey.Value.MainKey}: edit   {DeleteKey.Value.MainKey}: delete"
-                : "";
-            string line3 = Time.time < _flashUntil ? _flash : $"{MarkerStore.Markers.Count} markers in {MarkerStore.WorldName}   {CycleToolKey.Value.MainKey}: next tool   {ToggleKey.Value.MainKey}: exit";
-
-            GUIStyle style = new(GUI.skin.box) { alignment = TextAnchor.UpperLeft, fontSize = 13, normal = { textColor = Color.white } };
-            string text = $"MARKERS   {tool}\n{hover}\n{line3}";
-            Vector2 size = style.CalcSize(new GUIContent(text));
-            GUI.Box(new Rect((Screen.width - size.x) / 2f - 8f, 48f, size.x + 16f, size.y + 10f), text, style);
-
-            // Crosshair
-            float cx = Screen.width / 2f;
-            float cy = Screen.height / 2f;
-            GUI.Box(new Rect(cx - 6f, cy - 1f, 12f, 2f), GUIContent.none);
-            GUI.Box(new Rect(cx - 1f, cy - 6f, 2f, 12f), GUIContent.none);
-        }
-
-        private void DrawEditWindow(int id)
-        {
-            if (_editing == null)
-            {
-                return;
-            }
-
-            GUILayout.Label("Label");
-            GUI.SetNextControlName("markerLabel");
-            _editLabel = GUILayout.TextField(_editLabel, 80);
-            GUILayout.Label("Note (becomes the call-out text)");
-            _editNote = GUILayout.TextArea(_editNote, 400, GUILayout.Height(60f));
-
-            if (_editing.Kind == MarkerKind.Area)
-            {
-                GUILayout.Label("Type");
-                GUILayout.BeginHorizontal();
-                foreach (string tag in AreaTags)
-                {
-                    bool selected = _editing.tag == tag;
-                    if (GUILayout.Toggle(selected, tag, GUI.skin.button) && !selected)
-                    {
-                        _editing.tag = tag;
-                    }
-                }
-
-                GUILayout.EndHorizontal();
-            }
-
-            if (_editingWaypoint >= 0)
-            {
-                GUILayout.BeginHorizontal();
-                GUILayout.Label("Hold at this waypoint (seconds)", GUILayout.Width(220f));
-                _editHold = GUILayout.TextField(_editHold, 6, GUILayout.Width(60f));
-                GUILayout.EndHorizontal();
-            }
-
-            GUILayout.Space(6f);
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Save"))
-            {
-                SaveEdit();
-            }
-
-            if (GUILayout.Button("Delete"))
-            {
-                Marker doomed = _editing;
-                CancelEdit();
-                MarkerStore.Remove(doomed);
-                Flash($"Removed \"{doomed.label}\"");
-            }
-
-            if (GUILayout.Button("Cancel"))
-            {
-                CancelEdit();
-            }
-
-            GUILayout.EndHorizontal();
-
-            Event e = Event.current;
-            if (e.type == EventType.KeyDown && e.keyCode == KeyCode.Escape)
-            {
-                CancelEdit();
-                e.Use();
-            }
-            else if (e.type == EventType.KeyDown && (e.keyCode == KeyCode.Return || e.keyCode == KeyCode.KeypadEnter) && GUI.GetNameOfFocusedControl() == "markerLabel")
-            {
-                SaveEdit();
-                e.Use();
-            }
-
-            if (_focusLabel)
-            {
-                GUI.FocusControl("markerLabel");
-                _focusLabel = false;
-            }
-
-            GUI.DragWindow();
         }
     }
 }
