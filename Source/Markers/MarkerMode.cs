@@ -48,6 +48,48 @@ namespace cameraTools.Markers
         }
     }
 
+    /// <summary>Tracks when the marker tools moved the free camera, so the user always has a way back to the character.</summary>
+    public static class MarkerCamera
+    {
+        private static string _what = "";
+
+        public static bool Active => !string.IsNullOrEmpty(_what) && GameCamera.InFreeFly();
+
+        public static string What => _what;
+
+        public static void Sent(string what)
+        {
+            _what = what;
+        }
+
+        public static void Return()
+        {
+            PathPlayer.Stop();
+            CreativeZoneCameraController.StopMove();
+            CreativeZoneCameraController.StopOrbit();
+            if (GameCamera.InFreeFly())
+            {
+                CreativeZoneCameraController.SetFreeFly(false);
+            }
+
+            _what = "";
+            if (MarkerVisibility.Mode == MarkerVisibilityMode.Hide)
+            {
+                MarkerVisibility.Mode = MarkerVisibilityMode.Auto;
+            }
+
+            MarkerMode.Flash("Camera returned to your character");
+        }
+
+        public static void Tick()
+        {
+            if (!string.IsNullOrEmpty(_what) && !GameCamera.InFreeFly())
+            {
+                _what = "";
+            }
+        }
+    }
+
     public class MarkerMode : MonoBehaviour
     {
         private static MarkerMode? _instance;
@@ -61,6 +103,7 @@ namespace cameraTools.Markers
         public static ConfigEntry<KeyboardShortcut> RecordPathKey = null!;
         public static ConfigEntry<KeyboardShortcut> EditKey = null!;
         public static ConfigEntry<KeyboardShortcut> DeleteKey = null!;
+        public static ConfigEntry<KeyboardShortcut> ReturnKey = null!;
         public static ConfigEntry<float> RecordInterval = null!;
         public static ConfigEntry<float> EyeHeight = null!;
 
@@ -117,6 +160,7 @@ namespace cameraTools.Markers
             RecordPathKey = config.Bind("Markers", "RecordPathKey", new KeyboardShortcut(KeyCode.G), "Start or stop live path recording");
             EditKey = config.Bind("Markers", "EditKey", new KeyboardShortcut(KeyCode.E), "Rename the marker under the crosshair (or set a waypoint hold)");
             DeleteKey = config.Bind("Markers", "DeleteKey", new KeyboardShortcut(KeyCode.Delete), "Delete the marker under the crosshair, or the last draft point");
+            ReturnKey = config.Bind("Markers", "ReturnKey", new KeyboardShortcut(KeyCode.F8), "Leave the free camera and return to your character (after Go to, Preview or path playback)");
             RecordInterval = config.Bind("Markers", "RecordInterval", 0.5f, "Seconds between samples when live-recording a path");
             EyeHeight = config.Bind("Markers", "EyeHeight", 1.7f, "Camera height above the feet when a path waypoint is placed while walking");
         }
@@ -184,6 +228,13 @@ namespace cameraTools.Markers
         {
             if (Player.m_localPlayer == null || GameCamera.instance == null)
             {
+                return;
+            }
+
+            MarkerCamera.Tick();
+            if (ReturnKey.Value.IsDown() && !UiBlocked() && GameCamera.InFreeFly())
+            {
+                MarkerCamera.Return();
                 return;
             }
 
@@ -577,6 +628,12 @@ namespace cameraTools.Markers
         {
             if (_instance == null) return "";
             MarkerMode m = _instance;
+            if (!Active && MarkerCamera.Active)
+            {
+                if (PathPlayer.IsPlaying) return $"CAMERA  playing path \"{PathPlayer.PlayingLabel}\"";
+                return $"CAMERA  {MarkerCamera.What}";
+            }
+
             CultureInfo ci = CultureInfo.InvariantCulture;
             switch (m._tool)
             {
@@ -605,12 +662,18 @@ namespace cameraTools.Markers
                 return m._flash;
             }
 
+            if (!Active && MarkerCamera.Active)
+            {
+                return $"{ReturnKey.Value.MainKey}: return to your character   {ToggleKey.Value.MainKey}: marker mode   Tab: marker panel";
+            }
+
             if (m._hovered != null)
             {
                 return $"looking at {m._hovered.kind} \"{m._hovered.label}\"{(m._hoveredWaypoint >= 0 ? $" wp {m._hoveredWaypoint + 1}" : "")}   {EditKey.Value.MainKey}: rename   {DeleteKey.Value.MainKey}: delete";
             }
 
-            return $"{MarkerStore.ActiveBuild.name}: {MarkerStore.Markers.Count} markers   {CycleToolKey.Value.MainKey}: next tool   {ToggleKey.Value.MainKey}: exit   Tab: panel";
+            string back = GameCamera.InFreeFly() ? $"   {ReturnKey.Value.MainKey}: return to character" : "";
+            return $"{MarkerStore.ActiveBuild.name}: {MarkerStore.Markers.Count} markers   {CycleToolKey.Value.MainKey}: next tool   {ToggleKey.Value.MainKey}: exit{back}   Tab: panel";
         }
 
         public static void DrawPreview(float alpha)

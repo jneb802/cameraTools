@@ -27,7 +27,7 @@ ct_place <cameraX cameraY cameraZ> <lookX lookY lookZ>
 ct_move <start|stop|status> [duration] [startX startY startZ endX endY endZ] [lookX lookY lookZ] [linear|ease|in|out]
 ct_orbit <start|stop|status> [duration] [degrees] [x y z]
 ct_screenshot [filename]
-ct_mark <list [kind|all]|build [list|new <name>|use <id|name>]|panel|show|hide|auto|mode on|off|export|reload|clear [kind]|remove <id|label>|goto <id|label>|shot <label>|point <label> [x y z]>
+ct_mark <list [kind|all]|build [list|new <name>|use <id|name>]|panel|return|show|hide|auto|mode on|off|export|reload|clear [kind]|remove <id|label>|goto <id|label>|shot <label>|point <label> [x y z]>
 ct_path <list|play <id|label> [duration] [waypoints|forward|look x y z]|stop|status|preview <id|label>>
 ```
 
@@ -37,7 +37,9 @@ Markers are a client-side overlay for planning shots of a build. They are never 
 
 Press `F7` to enter marker mode. A status strip under the compass shows the current tool and keys. Everything is rebindable in the config file. Markers are grouped into **builds**; the overlay and the panel show the active build only, so one world file can hold several bases.
 
-Open the inventory (`Tab`) and click the camera tab hanging under the crafting panel for the **marker panel**: pick the tool and shape, switch builds (`<`, `>`, New, Rename), toggle marker mode and overlay visibility, browse the active build's markers, edit the selected marker's label, note and type, and Go to, Play, Preview or Delete it. Naming a new marker uses the game's own text dialog.
+Open the inventory (`Tab`) and click the camera icon beside the player panel (left of the Praetoris server guide icon when that mod is installed) for the **marker dialog**: pick the tool and shape, switch builds (`<`, `>`, New, Rename), toggle marker mode and overlay visibility, browse the active build's markers, edit the selected marker's label, note and type, and Go to, Play path, Preview or Delete it. `Escape` closes the dialog. Naming a new marker uses the game's own text dialog.
+
+Go to, Preview and path playback move the free camera. Press `F8` (or the dialog's Return camera button, or `ct_mark return`) to leave the free camera and return to your character; the status strip shows this hint whenever the camera is away.
 
 | Tool | Place with | What it stores |
 |---|---|---|

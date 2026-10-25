@@ -21,7 +21,7 @@ namespace cameraTools.Markers
             _registered = true;
 
             _ = new Terminal.ConsoleCommand("ct_mark",
-                "Markers: ct_mark <list [kind|all]|build [list|new <name>|use <id|name>]|panel|show|hide|auto|mode on|off|export|reload|clear [kind]|remove <id|label>|goto <id|label>|shot <label>|point <label> [x y z]>",
+                "Markers: ct_mark <list [kind|all]|build [list|new <name>|use <id|name>]|panel|return|show|hide|auto|mode on|off|export|reload|clear [kind]|remove <id|label>|goto <id|label>|shot <label>|point <label> [x y z]>",
                 args =>
                 {
                     try
@@ -89,6 +89,9 @@ namespace cameraTools.Markers
                 case "panel":
                     MarkerPanel.Open();
                     return "OK: marker panel opened";
+                case "return":
+                    MarkerCamera.Return();
+                    return $"OK: freefly={GameCamera.InFreeFly()}";
                 case "show":
                     MarkerVisibility.Mode = MarkerVisibilityMode.Show;
                     return "OK: markers shown";
@@ -264,6 +267,7 @@ namespace cameraTools.Markers
 
         public static void GoTo(Marker marker)
         {
+            MarkerCamera.Sent($"at {marker.kind} \"{marker.label}\"");
             switch (marker.Kind)
             {
                 case MarkerKind.Shot:

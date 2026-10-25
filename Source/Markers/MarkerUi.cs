@@ -283,32 +283,58 @@ namespace cameraTools.Markers
                 return _cameraIcon;
             }
 
-            const int size = 32;
-            Texture2D tex = new(size, size, TextureFormat.RGBA32, false) { filterMode = FilterMode.Bilinear };
-            Color clear = new(0f, 0f, 0f, 0f);
+            // Drawn at twice the display size for smooth edges, in the same flat gold and dark brown as the inventory pictograms.
+            const int size = 128;
+            Texture2D texture = new(size, size, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            Color[] pixels = new Color[size * size];
+            Color gold = new(0.78f, 0.49f, 0.18f);
+            Color light = new(1f, 0.9f, 0.65f);
+            Color dark = new(0.32f, 0.16f, 0.07f);
             for (int y = 0; y < size; y++)
             {
                 for (int x = 0; x < size; x++)
                 {
-                    bool body = x >= 3 && x <= 28 && y >= 7 && y <= 23;
-                    bool bump = x >= 10 && x <= 18 && y >= 23 && y <= 27;
-                    float dx = x - 16.5f;
-                    float dy = y - 15f;
+                    float fx = x + 0.5f;
+                    float fy = y + 0.5f;
+                    // Body: rounded rectangle 14..114 x 30..94
+                    bool body = RoundedRect(fx, fy, 14f, 30f, 114f, 94f, 10f);
+                    bool bodyInner = RoundedRect(fx, fy, 19f, 35f, 109f, 89f, 7f);
+                    // Prism bump on top: 44..84 x 90..106
+                    bool bump = RoundedRect(fx, fy, 44f, 88f, 84f, 106f, 6f);
+                    bool bumpInner = RoundedRect(fx, fy, 49f, 92f, 79f, 101f, 4f);
+                    // Lens
+                    float dx = fx - 64f;
+                    float dy = fy - 60f;
                     float r = Mathf.Sqrt(dx * dx + dy * dy);
-                    bool ring = r >= 4.2f && r <= 6.5f;
-                    bool lens = r < 2.6f;
-                    bool shutter = x >= 23 && x <= 26 && y >= 19 && y <= 21;
-                    Color c = clear;
-                    if (body || bump) c = Orange;
-                    if (ring || lens) c = new Color(0.15f, 0.1f, 0.05f, 1f);
-                    if (shutter) c = new Color(0.15f, 0.1f, 0.05f, 1f);
-                    tex.SetPixel(x, y, c);
+                    // Shutter button
+                    bool shutter = RoundedRect(fx, fy, 92f, 72f, 106f, 84f, 3f);
+                    Color? color = null;
+                    if (body || bump) color = dark;
+                    if (bodyInner || bumpInner) color = gold;
+                    if (shutter) color = dark;
+                    if (r <= 24f) color = dark;
+                    if (r <= 19f) color = light;
+                    if (r <= 13f) color = dark;
+                    if (r <= 8f) color = gold;
+                    if (dx > -9f && dx < -3f && dy > 3f && dy < 9f) color = light; // highlight
+                    if (color.HasValue) pixels[y * size + x] = color.Value;
                 }
             }
 
-            tex.Apply();
-            _cameraIcon = Sprite.Create(tex, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f), 32f);
+            texture.SetPixels(pixels);
+            texture.Apply(false, true);
+            _cameraIcon = Sprite.Create(texture, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f));
             return _cameraIcon;
+        }
+
+        private static bool RoundedRect(float x, float y, float x0, float y0, float x1, float y1, float radius)
+        {
+            if (x < x0 || x > x1 || y < y0 || y > y1) return false;
+            float cx = Mathf.Clamp(x, x0 + radius, x1 - radius);
+            float cy = Mathf.Clamp(y, y0 + radius, y1 - radius);
+            float dx = x - cx;
+            float dy = y - cy;
+            return dx * dx + dy * dy <= radius * radius;
         }
     }
 
@@ -332,15 +358,16 @@ namespace cameraTools.Markers
                 Build(Hud.instance.m_rootObject.transform);
             }
 
-            bool show = MarkerMode.Active && !InventoryGui.IsVisible();
+            bool show = (MarkerMode.Active || MarkerCamera.Active) && !InventoryGui.IsVisible();
             if (_root!.activeSelf != show)
             {
                 _root.SetActive(show);
             }
 
-            if (_crosshair != null && _crosshair.activeSelf != show)
+            bool crosshair = MarkerMode.Active && !InventoryGui.IsVisible();
+            if (_crosshair != null && _crosshair.activeSelf != crosshair)
             {
-                _crosshair.SetActive(show);
+                _crosshair.SetActive(crosshair);
             }
 
             if (show)
@@ -383,11 +410,11 @@ namespace cameraTools.Markers
         }
     }
 
-    /// <summary>The management panel inside the inventory, opened from a camera tab under the crafting panel.</summary>
+    /// <summary>The marker dialog, opened from a camera icon beside the player panel, in the style of the Praetoris server guide.</summary>
     public class MarkerPanel : MonoBehaviour
     {
-        private GameObject? _tab;
-        private Button? _tabButton;
+        private static MarkerPanel? _instance;
+        private GameObject? _icon;
         private GameObject? _panel;
         private bool _open;
         private bool _dirty = true;
@@ -409,7 +436,14 @@ namespace cameraTools.Markers
         private TextMeshProUGUI? _footer;
         private Marker? _bound;
 
-        public static bool PanelOpen { get; private set; }
+        public static bool PanelOpen => _instance != null && _instance._open;
+        public static bool FieldFocused => _instance != null && _instance._open &&
+            ((_instance._label != null && _instance._label.isFocused) || (_instance._note != null && _instance._note.isFocused));
+
+        private void Awake()
+        {
+            _instance = this;
+        }
 
         private void OnEnable()
         {
@@ -421,19 +455,24 @@ namespace cameraTools.Markers
             MarkerStore.Changed -= MarkDirty;
         }
 
+        private void OnDestroy()
+        {
+            if (_instance == this) _instance = null;
+        }
+
         private void MarkDirty() => _dirty = true;
 
         private void Update()
         {
             InventoryGui gui = InventoryGui.instance;
-            if (gui == null || gui.m_crafting == null)
+            if (gui == null || gui.m_infoPanel == null)
             {
                 return;
             }
 
-            if (_tab == null)
+            if (_icon == null)
             {
-                BuildTab(gui);
+                BuildIcon(gui);
             }
 
             if (!InventoryGui.IsVisible())
@@ -457,99 +496,146 @@ namespace cameraTools.Markers
             }
         }
 
-        private void BuildTab(InventoryGui gui)
+        public static void Close()
         {
-            Button button = UiKit.Button(gui.m_crafting, "", () => SetOpen(!_open), 76f, 36f);
-            _tab = button.gameObject;
-            _tab.name = "MarkersTab";
-            _tabButton = button;
-            Destroy(_tab.GetComponent<LayoutElement>());
+            _instance?.SetOpen(false);
+        }
 
-            TMP_Text? text = _tab.GetComponentInChildren<TMP_Text>(true);
-            if (text != null)
+        /// <summary>A repair-button frame on a repair-panel backdrop, placed beside the player panel. Sits left of the server guide icon when that mod is present.</summary>
+        private void BuildIcon(InventoryGui gui)
+        {
+            Button source = gui.m_repairButton;
+            if (source == null || gui.m_repairPanel == null)
             {
-                text.text = "";
+                return;
             }
 
-            GameObject icon = new("Icon", typeof(RectTransform), typeof(Image));
-            icon.transform.SetParent(_tab.transform, false);
-            Image img = icon.GetComponent<Image>();
-            img.sprite = UiKit.CameraIcon();
-            img.raycastTarget = false;
-            img.preserveAspect = true;
-            RectTransform ir = UiKit.Rect(icon);
-            ir.anchorMin = ir.anchorMax = new Vector2(0.5f, 0.5f);
-            ir.sizeDelta = new Vector2(28f, 28f);
+            RectTransform repairRect = (RectTransform)source.transform;
+            RectTransform backdrop = Instantiate((RectTransform)gui.m_repairPanel, gui.m_infoPanel, false);
+            backdrop.name = "MarkersBackdrop";
+            backdrop.anchorMin = backdrop.anchorMax = new Vector2(0f, 0.5f);
+            backdrop.pivot = new Vector2(1f, 0.5f);
+            float slot = ((RectTransform)gui.m_repairPanel).rect.height;
+            backdrop.sizeDelta = Vector2.one * slot;
+            bool guidePresent = gui.m_infoPanel.Find("ServerGuideBackdrop") != null;
+            backdrop.anchoredPosition = guidePresent ? new Vector2(-(slot + 4f), 0f) : Vector2.zero;
+            backdrop.gameObject.SetActive(true);
+            foreach (Graphic graphic in backdrop.GetComponentsInChildren<Graphic>(true))
+            {
+                graphic.raycastTarget = false;
+            }
 
-            RectTransform rt = UiKit.Rect(_tab);
-            rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0f);
-            rt.pivot = new Vector2(0.5f, 1f);
-            rt.anchoredPosition = new Vector2(0f, 6f);
-            rt.sizeDelta = new Vector2(76f, 36f);
+            GameObject iconObject = new("MarkersIcon", typeof(RectTransform), typeof(Image), typeof(Button), typeof(UITooltip));
+            RectTransform rect = (RectTransform)iconObject.transform;
+            rect.SetParent(backdrop, false);
+            iconObject.layer = source.gameObject.layer;
+            rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = Vector2.zero;
+            rect.sizeDelta = repairRect.sizeDelta;
+            rect.localScale = repairRect.localScale;
+            Image frame = iconObject.GetComponent<Image>();
+            Image sourceFrame = source.GetComponent<Image>();
+            frame.sprite = sourceFrame.sprite;
+            frame.type = sourceFrame.type;
+            frame.material = sourceFrame.material;
+            frame.color = sourceFrame.color;
 
-            UITooltip tip = _tab.GetComponent<UITooltip>() ?? _tab.AddComponent<UITooltip>();
-            tip.m_text = "Markers: areas, points, shots and paths for shot planning";
-            tip.m_topic = "Markers";
+            GameObject glyph = new("Camera", typeof(RectTransform), typeof(Image));
+            glyph.layer = iconObject.layer;
+            RectTransform glyphRect = (RectTransform)glyph.transform;
+            glyphRect.SetParent(rect, false);
+            glyphRect.anchorMin = Vector2.zero;
+            glyphRect.anchorMax = Vector2.one;
+            glyphRect.offsetMin = new Vector2(8f, 8f);
+            glyphRect.offsetMax = new Vector2(-8f, -8f);
+            Image image = glyph.GetComponent<Image>();
+            image.sprite = UiKit.CameraIcon();
+            image.preserveAspect = true;
+            image.raycastTarget = false;
+
+            Button open = iconObject.GetComponent<Button>();
+            open.targetGraphic = frame;
+            open.transition = source.transition;
+            open.colors = source.colors;
+            open.spriteState = source.spriteState;
+            open.navigation = new Navigation { mode = Navigation.Mode.None };
+            open.onClick.AddListener(() => SetOpen(!_open));
+            UITooltip tooltip = iconObject.GetComponent<UITooltip>();
+            tooltip.m_tooltipPrefab = source.GetComponent<UITooltip>()?.m_tooltipPrefab
+                ?? gui.GetComponentsInChildren<UITooltip>(true).FirstOrDefault(item => item.m_tooltipPrefab != null)?.m_tooltipPrefab;
+            tooltip.m_text = "Markers";
+            _icon = iconObject;
         }
 
         private void SetOpen(bool open)
         {
-            _open = open;
-            PanelOpen = open;
-            if (_tabButton != null)
+            if (open == _open && (_panel != null || !open))
             {
-                _tabButton.interactable = !open;
+                return;
             }
 
+            _open = open;
             if (open)
             {
                 MarkerStore.EnsureLoaded();
+                InventoryGui gui = InventoryGui.instance;
                 if (_panel == null)
                 {
-                    BuildPanel(InventoryGui.instance);
+                    BuildPanel(gui);
                 }
 
+                if (gui.m_textsDialog != null) gui.m_textsDialog.gameObject.SetActive(false);
+                if (gui.m_skillsDialog != null) gui.m_skillsDialog.gameObject.SetActive(false);
+                if (gui.m_trophiesPanel != null) gui.m_trophiesPanel.SetActive(false);
                 _panel!.SetActive(true);
                 _panel.transform.SetAsLastSibling();
                 _dirty = true;
             }
             else if (_panel != null)
             {
+                SaveBound();
                 _panel.SetActive(false);
             }
         }
 
         private void BuildPanel(InventoryGui gui)
         {
-            _panel = UiKit.Panel(gui.m_crafting, "MarkersPanel");
+            Transform parent = gui.m_textsDialog != null ? gui.m_textsDialog.transform.parent : gui.m_inventoryRoot;
+            _panel = UiKit.Panel(parent, "MarkersDialog");
             RectTransform rt = UiKit.Rect(_panel);
-            UiKit.Stretch(rt);
+            rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.anchoredPosition = new Vector2(0f, -10f);
+            rt.sizeDelta = new Vector2(620f, 760f);
             VerticalLayoutGroup v = _panel.AddComponent<VerticalLayoutGroup>();
-            v.padding = new RectOffset(24, 24, 22, 22);
+            v.padding = new RectOffset(28, 28, 24, 24);
             v.spacing = 6f;
             v.childControlWidth = true;
             v.childControlHeight = true;
             v.childForceExpandWidth = true;
             v.childForceExpandHeight = false;
 
-            // Title and build selector
-            GameObject title = UiKit.Row(_panel.transform, 34f);
-            TextMeshProUGUI titleText = UiKit.Text(title.transform, "Markers", 26f, UiKit.Orange);
+            GameObject title = UiKit.Row(_panel.transform, 36f);
+            TextMeshProUGUI titleText = UiKit.Text(title.transform, "Markers", 28f, UiKit.Orange);
             titleText.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
-            UiKit.Button(title.transform, "<", () => { MarkerStore.CycleBuild(-1); _dirty = true; }, 30f, 30f);
-            _buildName = UiKit.Text(title.transform, "", 17f, UiKit.Beige, TextAlignmentOptions.Center);
-            _buildName.gameObject.AddComponent<LayoutElement>().preferredWidth = 150f;
-            UiKit.Button(title.transform, ">", () => { MarkerStore.CycleBuild(1); _dirty = true; }, 30f, 30f);
-            UiKit.Button(title.transform, "New", NewBuild, 54f, 30f, 14f);
-            UiKit.Button(title.transform, "Rename", RenameBuild, 72f, 30f, 14f);
+            UiKit.Button(title.transform, "Close", () => SetOpen(false), 72f, 30f, 15f);
 
-            // Tool row
+            GameObject buildRow = UiKit.Row(_panel.transform, 32f);
+            UiKit.Text(buildRow.transform, "Build", 15f, UiKit.Dim).gameObject.AddComponent<LayoutElement>().preferredWidth = 48f;
+            UiKit.Button(buildRow.transform, "<", () => { MarkerStore.CycleBuild(-1); _dirty = true; }, 30f, 30f);
+            _buildName = UiKit.Text(buildRow.transform, "", 17f, UiKit.Beige, TextAlignmentOptions.Center);
+            LayoutElement nameLe = _buildName.gameObject.AddComponent<LayoutElement>();
+            nameLe.flexibleWidth = 1f;
+            UiKit.Button(buildRow.transform, ">", () => { MarkerStore.CycleBuild(1); _dirty = true; }, 30f, 30f);
+            UiKit.Button(buildRow.transform, "New", NewBuild, 56f, 30f, 14f);
+            UiKit.Button(buildRow.transform, "Rename", RenameBuild, 74f, 30f, 14f);
+
             GameObject tools = UiKit.Row(_panel.transform, 32f);
             UiKit.Text(tools.transform, "Tool", 15f, UiKit.Dim).gameObject.AddComponent<LayoutElement>().preferredWidth = 48f;
             foreach (MarkerKind kind in new[] { MarkerKind.Area, MarkerKind.Point, MarkerKind.Shot, MarkerKind.Path })
             {
                 MarkerKind k = kind;
-                _toolButtons[k] = UiKit.Button(tools.transform, k.ToString(), () => { MarkerMode.Tool = k; }, 86f, 30f, 15f);
+                _toolButtons[k] = UiKit.Button(tools.transform, k.ToString(), () => { MarkerMode.Tool = k; }, 92f, 30f, 15f);
             }
 
             _shapeRow = UiKit.Row(_panel.transform, 32f);
@@ -557,38 +643,37 @@ namespace cameraTools.Markers
             foreach (AreaShape shape in new[] { AreaShape.Circle, AreaShape.Rectangle, AreaShape.Polygon })
             {
                 AreaShape sh = shape;
-                _shapeButtons[sh] = UiKit.Button(_shapeRow.transform, sh.ToString(), () => { MarkerMode.Shape = sh; }, 96f, 30f, 15f);
+                _shapeButtons[sh] = UiKit.Button(_shapeRow.transform, sh.ToString(), () => { MarkerMode.Shape = sh; }, 104f, 30f, 15f);
             }
 
             GameObject modes = UiKit.Row(_panel.transform, 32f);
-            _modeButton = UiKit.Button(modes.transform, "", () => { MarkerMode.SetActive(!MarkerMode.Active); }, 170f, 30f, 15f);
-            _visibilityButton = UiKit.Button(modes.transform, "", CycleVisibility, 170f, 30f, 15f);
+            _modeButton = UiKit.Button(modes.transform, "", () => { MarkerMode.SetActive(!MarkerMode.Active); }, 180f, 30f, 15f);
+            _visibilityButton = UiKit.Button(modes.transform, "", CycleVisibility, 180f, 30f, 15f);
+            UiKit.Button(modes.transform, "Return camera", () => { CloseInventory(); MarkerCamera.Return(); }, 140f, 30f, 14f);
 
-            // List
-            UiKit.ScrollList(_panel.transform, 190f, out _listContent);
+            UiKit.ScrollList(_panel.transform, 230f, out _listContent);
 
-            // Editor
             _selectedInfo = UiKit.Text(_panel.transform, "", 14f, UiKit.Dim);
-            _selectedInfo.gameObject.AddComponent<LayoutElement>().preferredHeight = 20f;
+            _selectedInfo.gameObject.AddComponent<LayoutElement>().preferredHeight = 22f;
             _label = UiKit.Input(_panel.transform, "label", false, 30f);
             _label.onEndEdit.AddListener(_ => SaveBound());
-            _note = UiKit.Input(_panel.transform, "note: what is interesting here (becomes the call-out)", true, 54f);
+            _note = UiKit.Input(_panel.transform, "note: what is interesting here (becomes the call-out)", true, 60f);
             _note.onEndEdit.AddListener(_ => SaveBound());
             _tagRow = UiKit.Row(_panel.transform, 28f, 4f);
             foreach (string tag in MarkerMode.AreaTags)
             {
                 string t = tag;
-                _tagButtons[t] = UiKit.Button(_tagRow.transform, t, () => { if (_bound != null) { _bound.tag = t; MarkerStore.Save(); } }, 66f, 26f, 13f);
+                _tagButtons[t] = UiKit.Button(_tagRow.transform, t, () => { if (_bound != null) { _bound.tag = t; MarkerStore.Save(); } }, 74f, 26f, 13f);
             }
 
             GameObject actions = UiKit.Row(_panel.transform, 32f);
-            UiKit.Button(actions.transform, "Go to", GoToSelected, 84f, 30f, 15f);
-            _playButton = UiKit.Button(actions.transform, "Play", PlaySelected, 84f, 30f, 15f);
-            UiKit.Button(actions.transform, "Preview", PreviewSelected, 84f, 30f, 15f);
-            UiKit.Button(actions.transform, "Delete", DeleteSelected, 84f, 30f, 15f);
+            UiKit.Button(actions.transform, "Go to", GoToSelected, 96f, 30f, 15f);
+            _playButton = UiKit.Button(actions.transform, "Play path", PlaySelected, 96f, 30f, 15f);
+            UiKit.Button(actions.transform, "Preview", PreviewSelected, 96f, 30f, 15f);
+            UiKit.Button(actions.transform, "Delete", DeleteSelected, 96f, 30f, 15f);
 
             _footer = UiKit.Text(_panel.transform, "", 13f, UiKit.Dim);
-            _footer.gameObject.AddComponent<LayoutElement>().preferredHeight = 18f;
+            _footer.gameObject.AddComponent<LayoutElement>().preferredHeight = 36f;
         }
 
         private void Refresh()
@@ -641,7 +726,7 @@ namespace cameraTools.Markers
             }
 
             Bind(MarkerMode.Selected);
-            _footer!.text = $"{markers.Count} markers in this build  |  {MarkerStore.AllMarkers.Count} total  |  {MarkerStore.FilePath}";
+            _footer!.text = $"{markers.Count} markers in this build, {MarkerStore.AllMarkers.Count} in the world file.\nF7 places markers in the world. Go to and Preview move the camera; F8 or Return camera brings it back.";
         }
 
         private static string KindTag(MarkerKind kind) => kind switch
@@ -817,8 +902,7 @@ namespace cameraTools.Markers
                 InventoryGui.instance.Show(null);
             }
 
-            MarkerPanel? panel = UnityEngine.Object.FindObjectOfType<MarkerPanel>();
-            panel?.SetOpen(true);
+            _instance?.SetOpen(true);
         }
     }
 

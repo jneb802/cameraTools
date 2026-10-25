@@ -125,6 +125,7 @@ namespace cameraTools.Markers
             p._elapsed = 0f;
             p._playing = true;
 
+            MarkerCamera.Sent($"path \"{marker.label}\"");
             MarkerVisibility.HideForCapture();
             CreativeZoneCameraController.StopMove();
             CreativeZoneCameraController.StopOrbit();
