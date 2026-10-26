@@ -21,7 +21,7 @@ namespace cameraTools.Markers
             _registered = true;
 
             _ = new Terminal.ConsoleCommand("ct_mark",
-                "Markers: ct_mark <list [kind|all]|build [list|new <name>|use <id|name>]|panel|return|show|hide|auto|mode on|off|export|reload|clear [kind]|remove <id|label>|goto <id|label>|shot <label>|point <label> [x y z]>",
+                "Markers: ct_mark <tool|list [kind|all]|build [list|new <name>|use <id|name>]|return|show|hide|auto|export|reload|clear [kind]|remove <id|label>|goto <id|label>|shot <label>|point <label> [x y z]>",
                 args =>
                 {
                     try
@@ -86,9 +86,9 @@ namespace cameraTools.Markers
                     lines.AddRange(MarkerStore.Builds.Select(b => $"{b.id} \"{b.name}\" markers={MarkerStore.AllMarkers.Count(m => m.build == b.id)}{(b.id == MarkerStore.ActiveBuild.id ? " (active)" : "")}"));
                     return string.Join("\n", lines);
                 }
-                case "panel":
-                    MarkerPanel.Open();
-                    return "OK: marker panel opened";
+                case "tool":
+                    if (Player.m_localPlayer == null) throw new InvalidOperationException("No local player.");
+                    return MarkerTool.GiveTool(Player.m_localPlayer);
                 case "return":
                     MarkerCamera.Return();
                     return $"OK: freefly={GameCamera.InFreeFly()}";
@@ -101,13 +101,6 @@ namespace cameraTools.Markers
                 case "auto":
                     MarkerVisibility.Mode = MarkerVisibilityMode.Auto;
                     return $"OK: markers auto (visible={MarkerVisibility.Visible})";
-                case "mode":
-                {
-                    string value = args.Length >= 3 ? args[2].ToLowerInvariant() : "status";
-                    if (value == "on") MarkerMode.SetActive(true);
-                    else if (value == "off") MarkerMode.SetActive(false);
-                    return $"OK: markerMode={MarkerMode.Active}";
-                }
                 case "export":
                     return $"OK: saved {MarkerStore.Markers.Count} markers to {MarkerStore.Save()}";
                 case "reload":
@@ -170,7 +163,7 @@ namespace cameraTools.Markers
                     return $"OK: {point.Describe()}";
                 }
                 default:
-                    return "Usage: ct_mark <list [kind]|show|hide|auto|mode on|off|export|reload|clear [kind]|remove <id|label>|goto <id|label>|shot <label>|point <label> [x y z]>";
+                    return "Usage: ct_mark <tool|list [kind|all]|build [list|new <name>|use <id|name>]|return|show|hide|auto|export|reload|clear [kind]|remove <id|label>|goto <id|label>|shot <label>|point <label> [x y z]>";
             }
         }
 
@@ -242,7 +235,7 @@ namespace cameraTools.Markers
                         CreativeZoneCameraController.PlaceCamera(first.position, first.position + first.forward);
                     }
 
-                    return $"OK: previewing \"{path.label}\"; markers shown, ct_mark hide to clear";
+                    return $"OK: previewing \"{path.label}\"; markers shown until F8 or ct_mark auto";
                 }
                 default:
                     return "Usage: ct_path <list|play <id|label> [duration] [waypoints|forward|look x y z]|stop|status|preview <id|label>>";

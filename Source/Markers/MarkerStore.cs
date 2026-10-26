@@ -27,14 +27,13 @@ namespace cameraTools.Markers
                 {
                     case MarkerVisibilityMode.Show: return true;
                     case MarkerVisibilityMode.Hide: return false;
-                    default: return MarkerMode.Active;
+                    default:
+                        return MarkerMode.Placing
+                               && !CreativeZoneCameraController.IsMoving
+                               && !CreativeZoneCameraController.IsOrbiting
+                               && !PathPlayer.IsPlaying;
                 }
             }
-        }
-
-        public static void HideForCapture()
-        {
-            Mode = MarkerVisibilityMode.Hide;
         }
     }
 

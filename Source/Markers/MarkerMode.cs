@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using System.Globalization;
 using BepInEx.Configuration;
@@ -60,6 +59,7 @@ namespace cameraTools.Markers
         public static void Sent(string what)
         {
             _what = what;
+            MarkerMode.Say($"Camera {what}. {MarkerMode.ReturnKey.Value.MainKey} returns it to your character.");
         }
 
         public static void Return()
@@ -73,12 +73,8 @@ namespace cameraTools.Markers
             }
 
             _what = "";
-            if (MarkerVisibility.Mode == MarkerVisibilityMode.Hide)
-            {
-                MarkerVisibility.Mode = MarkerVisibilityMode.Auto;
-            }
-
-            MarkerMode.Flash("Camera returned to your character");
+            MarkerVisibility.Mode = MarkerVisibilityMode.Auto;
+            MarkerMode.Say("Camera returned to your character");
         }
 
         public static void Tick()
@@ -90,15 +86,16 @@ namespace cameraTools.Markers
         }
     }
 
+    /// <summary>
+    /// Marker placement state. The tool itself is the cloned Hammer in <see cref="MarkerTool"/>; this class
+    /// turns its build-mode clicks into markers, keeps the polygon, circle and path drafts, and handles
+    /// hover, rename and removal. Nothing here runs unless the marker tool is in the player's hand.
+    /// </summary>
     public class MarkerMode : MonoBehaviour
     {
         private static MarkerMode? _instance;
-        private static readonly int PlaceMask = LayerMask.GetMask("Default", "static_solid", "Default_small", "piece", "piece_nonsolid", "terrain", "vehicle");
         public static readonly string[] AreaTags = { "room", "exterior", "courtyard", "detail", "hero", "entrance", "other" };
 
-        public static ConfigEntry<KeyboardShortcut> ToggleKey = null!;
-        public static ConfigEntry<KeyboardShortcut> CycleToolKey = null!;
-        public static ConfigEntry<KeyboardShortcut> ShapeKey = null!;
         public static ConfigEntry<KeyboardShortcut> FinishKey = null!;
         public static ConfigEntry<KeyboardShortcut> RecordPathKey = null!;
         public static ConfigEntry<KeyboardShortcut> EditKey = null!;
@@ -107,60 +104,40 @@ namespace cameraTools.Markers
         public static ConfigEntry<float> RecordInterval = null!;
         public static ConfigEntry<float> EyeHeight = null!;
 
+        /// <summary>True while the marker tool is equipped.</summary>
         public static bool Active { get; private set; }
-        public static bool IsEditing => false;
+
+        /// <summary>True while the marker tool is equipped and the camera is on the character, i.e. marks can be placed.</summary>
+        public static bool Placing => Active && !GameCamera.InFreeFly();
+
         public static Marker? Hovered => _instance?._hovered;
         public static int HoveredWaypoint => _instance?._hoveredWaypoint ?? -1;
         public static Marker? Highlighted;
-        public static Marker? Selected;
 
-        public static MarkerKind Tool
-        {
-            get => _instance?._tool ?? MarkerKind.Area;
-            set { if (_instance != null) _instance.SetTool(value); }
-        }
+        public static MarkerKind Tool => _instance?._tool ?? MarkerKind.Point;
+        public static AreaShape Shape => _instance?._shape ?? AreaShape.Circle;
 
-        public static AreaShape Shape
-        {
-            get => _instance?._shape ?? AreaShape.Circle;
-            set { if (_instance != null) { _instance._shape = value; _instance._previewOutline = null; } }
-        }
-
-        public static bool BlockPlayerActions => Active && !GameCamera.InFreeFly();
-        public static bool ConsumeScroll => Active && _instance != null && _instance._tool == MarkerKind.Area && _instance._shape != AreaShape.Polygon && !UiBlocked();
-
-        private MarkerKind _tool = MarkerKind.Area;
+        private MarkerKind _tool = MarkerKind.Point;
         private AreaShape _shape = AreaShape.Circle;
-        private float _radius = 6f;
-        private float _width = 10f;
-        private float _depth = 10f;
-        private float _rotation;
         private bool _hasPreviewPoint;
         private Vector3 _previewPoint;
-        private List<Vector3>? _previewOutline;
-        private float _previewOutlineTime;
 
         private readonly List<Waypoint> _draft = new();
         private readonly List<Vector3> _polygonDraft = new();
+        private Vector3? _circleCenter;
         private bool _recording;
         private float _lastSampleTime;
 
         private Marker? _hovered;
         private int _hoveredWaypoint = -1;
 
-        private string _flash = "";
-        private float _flashUntil;
-
         public static void BindConfig(ConfigFile config)
         {
-            ToggleKey = config.Bind("Markers", "ToggleKey", new KeyboardShortcut(KeyCode.F7), "Toggle marker mode");
-            CycleToolKey = config.Bind("Markers", "CycleToolKey", new KeyboardShortcut(KeyCode.T), "Cycle marker tool: area, point, shot, path");
-            ShapeKey = config.Bind("Markers", "ShapeKey", new KeyboardShortcut(KeyCode.R), "Cycle area shape: circle, rectangle, polygon");
-            FinishKey = config.Bind("Markers", "FinishKey", new KeyboardShortcut(KeyCode.F), "Finish the path or polygon being drawn");
-            RecordPathKey = config.Bind("Markers", "RecordPathKey", new KeyboardShortcut(KeyCode.G), "Start or stop live path recording");
-            EditKey = config.Bind("Markers", "EditKey", new KeyboardShortcut(KeyCode.E), "Rename the marker under the crosshair (or set a waypoint hold)");
-            DeleteKey = config.Bind("Markers", "DeleteKey", new KeyboardShortcut(KeyCode.Delete), "Delete the marker under the crosshair, or the last draft point");
-            ReturnKey = config.Bind("Markers", "ReturnKey", new KeyboardShortcut(KeyCode.F8), "Leave the free camera and return to your character (after Go to, Preview or path playback)");
+            FinishKey = config.Bind("Markers", "FinishKey", new KeyboardShortcut(KeyCode.F), "Finish the path or area being drawn (clicking the first corner, or clicking twice without moving on a path, does the same)");
+            RecordPathKey = config.Bind("Markers", "RecordPathKey", new KeyboardShortcut(KeyCode.G), "Start or stop live path recording while the Path mark is selected");
+            EditKey = config.Bind("Markers", "EditKey", new KeyboardShortcut(KeyCode.E), "Rename the marker under the crosshair (on a path waypoint: set its hold time)");
+            DeleteKey = config.Bind("Markers", "DeleteKey", new KeyboardShortcut(KeyCode.Delete), "Remove the last draft point, or the marker under the crosshair (middle mouse does the same)");
+            ReturnKey = config.Bind("Markers", "ReturnKey", new KeyboardShortcut(KeyCode.F8), "Leave the free camera and return to your character (after goto, preview or path playback)");
             RecordInterval = config.Bind("Markers", "RecordInterval", 0.5f, "Seconds between samples when live-recording a path");
             EyeHeight = config.Bind("Markers", "EyeHeight", 1.7f, "Camera height above the feet when a path waypoint is placed while walking");
         }
@@ -178,42 +155,6 @@ namespace cameraTools.Markers
             }
         }
 
-        public static void SetActive(bool active)
-        {
-            if (_instance == null)
-            {
-                return;
-            }
-
-            Active = active;
-            if (active)
-            {
-                MarkerStore.EnsureLoaded();
-                MarkerVisibility.Mode = MarkerVisibilityMode.Auto;
-            }
-            else
-            {
-                _instance._recording = false;
-                _instance._hovered = null;
-            }
-        }
-
-        private void SetTool(MarkerKind tool)
-        {
-            if (_tool == MarkerKind.Path && tool != MarkerKind.Path && (_recording || _draft.Count > 0))
-            {
-                FinishPath();
-            }
-
-            if (_tool == MarkerKind.Area && tool != MarkerKind.Area && _polygonDraft.Count > 0)
-            {
-                FinishPolygon();
-            }
-
-            _tool = tool;
-            _previewOutline = null;
-        }
-
         public static bool UiBlocked()
         {
             return Console.IsVisible()
@@ -221,12 +162,14 @@ namespace cameraTools.Markers
                    || TextInput.IsVisible()
                    || Menu.IsVisible()
                    || InventoryGui.IsVisible()
-                   || Minimap.IsOpen();
+                   || Minimap.IsOpen()
+                   || Hud.IsPieceSelectionVisible();
         }
 
         private void Update()
         {
-            if (Player.m_localPlayer == null || GameCamera.instance == null)
+            Player? player = Player.m_localPlayer;
+            if (player == null || GameCamera.instance == null)
             {
                 return;
             }
@@ -238,31 +181,42 @@ namespace cameraTools.Markers
                 return;
             }
 
-            if (!Active)
+            bool equipped = MarkerTool.IsEquipped(player);
+            if (equipped != Active)
             {
-                if (ToggleKey.Value.IsDown() && !UiBlocked())
+                Active = equipped;
+                if (equipped)
                 {
-                    SetActive(true);
-                    Flash("Marker mode on");
+                    MarkerStore.EnsureLoaded();
                 }
-
-                return;
+                else
+                {
+                    ClearDrafts();
+                    _hovered = null;
+                    _hoveredWaypoint = -1;
+                }
             }
 
-            if (ToggleKey.Value.IsDown() && !UiBlocked())
+            if (!Active)
             {
-                SetActive(false);
-                Flash("Marker mode off");
                 return;
             }
 
             MarkerStore.EnsureLoaded();
+            SyncToolFromSelection(player);
+
+            bool freeFly = GameCamera.InFreeFly();
+            if (freeFly)
+            {
+                HideGhost(player);
+            }
+
             if (UiBlocked())
             {
                 return;
             }
 
-            UpdatePreviewPoint();
+            UpdatePreviewPoint(player, freeFly);
             UpdateHover();
 
             if (_recording && Time.time - _lastSampleTime >= RecordInterval.Value)
@@ -270,55 +224,10 @@ namespace cameraTools.Markers
                 SampleWaypoint(false);
             }
 
-            if (CycleToolKey.Value.IsDown())
+            // The game ignores player input in the free camera, so the Shot mark is placed here.
+            if (freeFly && _tool == MarkerKind.Shot && ZInput.GetButtonDown("Attack"))
             {
-                SetTool((MarkerKind)(((int)_tool + 1) % 4));
-                Flash($"Tool: {_tool}");
-            }
-
-            if (ShapeKey.Value.IsDown() && _tool == MarkerKind.Area)
-            {
-                if (_polygonDraft.Count > 0)
-                {
-                    FinishPolygon();
-                }
-
-                _shape = (AreaShape)(((int)_shape + 1) % 3);
-                _previewOutline = null;
-            }
-
-            if (_tool == MarkerKind.Area && _shape != AreaShape.Polygon)
-            {
-                float scroll = ZInput.m_instance != null ? ZInput.m_instance.Internal_GetMouseScrollWheel() : 0f;
-                if (Mathf.Abs(scroll) > 0.0001f)
-                {
-                    float step = scroll > 0f ? 1f : -1f;
-                    bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
-                    bool ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
-                    if (ctrl)
-                    {
-                        _rotation = (_rotation + step * 15f + 360f) % 360f;
-                    }
-                    else if (_shape == AreaShape.Circle)
-                    {
-                        _radius = Mathf.Clamp(_radius + step * (_radius >= 10f ? 2f : 1f), 1f, 120f);
-                    }
-                    else if (shift)
-                    {
-                        _depth = Mathf.Clamp(_depth + step * 2f, 1f, 200f);
-                    }
-                    else
-                    {
-                        _width = Mathf.Clamp(_width + step * 2f, 1f, 200f);
-                    }
-
-                    _previewOutline = null;
-                }
-            }
-
-            if (ZInput.GetMouseButtonDown(0))
-            {
-                Place();
+                PlaceShot();
             }
 
             if (EditKey.Value.IsDown() && _hovered != null)
@@ -328,7 +237,7 @@ namespace cameraTools.Markers
 
             if (DeleteKey.Value.IsDown())
             {
-                HandleDelete();
+                RemoveFromTool(player);
             }
 
             if (FinishKey.Value.IsDown())
@@ -343,74 +252,68 @@ namespace cameraTools.Markers
                 if (_recording)
                 {
                     _lastSampleTime = -100f;
-                    Flash("Recording path: move, then press the record key again or finish");
+                    Say($"Recording path: walk the route, then press {RecordPathKey.Value.MainKey} again or {FinishKey.Value.MainKey} to finish");
                 }
                 else
                 {
-                    Flash($"Recording paused ({_draft.Count} waypoints)");
+                    Say($"Recording paused ({_draft.Count} waypoints)");
                 }
             }
         }
 
-        private void HandleDelete()
+        private void SyncToolFromSelection(Player player)
         {
-            if (_tool == MarkerKind.Path && _draft.Count > 0)
+            if (!MarkerTool.TryGetTool(MarkerTool.SelectedPiece(player), out MarkerKind kind, out AreaShape shape))
             {
-                _draft.RemoveAt(_draft.Count - 1);
-                Flash($"Draft waypoint removed ({_draft.Count} left)");
                 return;
+            }
+
+            if (kind == _tool && shape == _shape)
+            {
+                return;
+            }
+
+            if (_tool == MarkerKind.Path && (_recording || _draft.Count > 0))
+            {
+                FinishPath();
             }
 
             if (_tool == MarkerKind.Area && _polygonDraft.Count > 0)
             {
-                _polygonDraft.RemoveAt(_polygonDraft.Count - 1);
-                Flash($"Polygon vertex removed ({_polygonDraft.Count} left)");
-                return;
+                FinishPolygon();
             }
 
-            if (_hovered == null)
+            _circleCenter = null;
+            _tool = kind;
+            _shape = shape;
+        }
+
+        private static void HideGhost(Player player)
+        {
+            if (player.m_placementGhost != null && player.m_placementGhost.activeSelf)
             {
-                return;
+                player.m_placementGhost.SetActive(false);
             }
 
-            if (_hovered.Kind == MarkerKind.Path && _hoveredWaypoint >= 0 && _hovered.waypoints.Count > 2)
+            if (player.m_placementMarkerInstance != null && player.m_placementMarkerInstance.activeSelf)
             {
-                _hovered.waypoints.RemoveAt(_hoveredWaypoint);
-                _hovered.InvalidateCache();
-                MarkerStore.Save();
-                Flash($"Waypoint {_hoveredWaypoint + 1} removed from \"{_hovered.label}\"");
-            }
-            else
-            {
-                string label = _hovered.label;
-                MarkerStore.Remove(_hovered);
-                if (Selected == _hovered) Selected = null;
-                _hovered = null;
-                Flash($"Removed \"{label}\"");
+                player.m_placementMarkerInstance.SetActive(false);
             }
         }
 
-        private Transform CameraTransform => GameCamera.instance.transform;
-
-        private void UpdatePreviewPoint()
+        private void UpdatePreviewPoint(Player player, bool freeFly)
         {
-            Transform cam = CameraTransform;
-            _hasPreviewPoint = Physics.Raycast(cam.position, cam.forward, out RaycastHit hit, 200f, PlaceMask);
+            GameObject? ghost = player.m_placementGhost;
+            _hasPreviewPoint = !freeFly && ghost != null && ghost.activeSelf && player.m_placementStatus != Player.PlacementStatus.NoRayHits;
             if (_hasPreviewPoint)
             {
-                _previewPoint = hit.point;
-            }
-
-            if (_tool == MarkerKind.Area && _shape != AreaShape.Polygon && _hasPreviewPoint && (_previewOutline == null || Time.time - _previewOutlineTime > 0.15f))
-            {
-                _previewOutline = MarkerRenderer.BuildOutline(_previewPoint, _shape, _radius, _width, _depth, _rotation);
-                _previewOutlineTime = Time.time;
+                _previewPoint = ghost!.transform.position;
             }
         }
 
         private void UpdateHover()
         {
-            Transform cam = CameraTransform;
+            Transform cam = GameCamera.instance.transform;
             Ray ray = new(cam.position, cam.forward);
             Marker? best = null;
             int bestWaypoint = -1;
@@ -462,73 +365,186 @@ namespace cameraTools.Markers
             return off <= allowed ? off / allowed + along * 0.001f : float.MaxValue;
         }
 
-        private void Place()
+        /// <summary>Called from the build system's place action. Returns true when the click did something.</summary>
+        public static bool PlaceFromTool(Player player, Piece piece)
         {
-            switch (_tool)
+            if (_instance == null || !MarkerTool.TryGetTool(piece, out MarkerKind kind, out AreaShape shape))
             {
-                case MarkerKind.Area:
-                    if (!_hasPreviewPoint)
-                    {
-                        Flash("Nothing under the crosshair to place on");
-                        return;
-                    }
-
-                    if (_shape == AreaShape.Polygon)
-                    {
-                        if (_polygonDraft.Count >= 3 && Vector3.Distance(_polygonDraft[0], _previewPoint) < 1.5f)
-                        {
-                            FinishPolygon();
-                            return;
-                        }
-
-                        _polygonDraft.Add(_previewPoint);
-                        Flash(_polygonDraft.Count >= 3
-                            ? $"Vertex {_polygonDraft.Count}; click the first vertex or press {FinishKey.Value.MainKey} to close"
-                            : $"Vertex {_polygonDraft.Count}");
-                        return;
-                    }
-
-                    Marker area = new()
-                    {
-                        Kind = MarkerKind.Area,
-                        position = _previewPoint,
-                        Shape = _shape,
-                        radius = _radius,
-                        width = _width,
-                        depth = _depth,
-                        rotation = _rotation,
-                        tag = "room"
-                    };
-                    Commit(area, "Area name");
-                    break;
-                case MarkerKind.Point:
-                    if (!_hasPreviewPoint)
-                    {
-                        Flash("Nothing under the crosshair to place on");
-                        return;
-                    }
-
-                    Commit(new Marker { Kind = MarkerKind.Point, position = _previewPoint }, "Point name");
-                    break;
-                case MarkerKind.Shot:
-                    Commit(new Marker
-                    {
-                        Kind = MarkerKind.Shot,
-                        cameraPosition = CameraTransform.position,
-                        lookDirection = CameraTransform.forward
-                    }, "Shot name");
-                    break;
-                case MarkerKind.Path:
-                    SampleWaypoint(true);
-                    break;
+                return false;
             }
+
+            MarkerMode m = _instance;
+            m._tool = kind;
+            m._shape = shape;
+            GameObject? ghost = player.m_placementGhost;
+            bool hasPoint = ghost != null && ghost.activeSelf && player.m_placementStatus != Player.PlacementStatus.NoRayHits;
+            Vector3 point = hasPoint ? ghost!.transform.position : Vector3.zero;
+
+            switch (kind)
+            {
+                case MarkerKind.Shot:
+                    m.PlaceShot();
+                    Swing(player);
+                    return true;
+
+                case MarkerKind.Point:
+                    if (!hasPoint)
+                    {
+                        Say("Nothing under the crosshair to mark", true);
+                        return false;
+                    }
+
+                    m.Commit(new Marker { Kind = MarkerKind.Point, position = point }, "Point name");
+                    Swing(player);
+                    return true;
+
+                case MarkerKind.Area when shape == AreaShape.Polygon:
+                    if (!hasPoint)
+                    {
+                        Say("Nothing under the crosshair to mark", true);
+                        return false;
+                    }
+
+                    if (m._polygonDraft.Count >= 3 && Vector3.Distance(m._polygonDraft[0], point) < 1.5f)
+                    {
+                        m.FinishPolygon();
+                    }
+                    else
+                    {
+                        m._polygonDraft.Add(point);
+                        Say(m._polygonDraft.Count >= 3
+                            ? $"Corner {m._polygonDraft.Count}. Click the first corner to close the area."
+                            : $"Corner {m._polygonDraft.Count}");
+                    }
+
+                    Swing(player);
+                    return true;
+
+                case MarkerKind.Area:
+                    if (!hasPoint)
+                    {
+                        Say("Nothing under the crosshair to mark", true);
+                        return false;
+                    }
+
+                    if (m._circleCenter == null)
+                    {
+                        m._circleCenter = point;
+                        Say("Center set. Click at the edge of the area.");
+                    }
+                    else
+                    {
+                        Vector3 center = m._circleCenter.Value;
+                        Vector3 flat = point - center;
+                        flat.y = 0f;
+                        Marker area = new()
+                        {
+                            Kind = MarkerKind.Area,
+                            position = center,
+                            Shape = AreaShape.Circle,
+                            radius = Mathf.Clamp(flat.magnitude, 1f, 120f),
+                            tag = "room"
+                        };
+                        m._circleCenter = null;
+                        m.Commit(area, "Area name");
+                    }
+
+                    Swing(player);
+                    return true;
+
+                case MarkerKind.Path:
+                    Vector3 eye = m.EyePosition();
+                    if (m._draft.Count >= 2 && Vector3.Distance(m._draft[m._draft.Count - 1].position, eye) < 0.5f)
+                    {
+                        m.FinishPath();
+                    }
+                    else
+                    {
+                        m.SampleWaypoint(true);
+                    }
+
+                    Swing(player);
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>Called from the build system's remove action and the Delete key.</summary>
+        public static void RemoveFromTool(Player player)
+        {
+            if (_instance == null)
+            {
+                return;
+            }
+
+            MarkerMode m = _instance;
+            if (m._tool == MarkerKind.Path && m._draft.Count > 0)
+            {
+                m._draft.RemoveAt(m._draft.Count - 1);
+                Say($"Waypoint removed ({m._draft.Count} left in the draft)");
+                return;
+            }
+
+            if (m._tool == MarkerKind.Area && m._polygonDraft.Count > 0)
+            {
+                m._polygonDraft.RemoveAt(m._polygonDraft.Count - 1);
+                Say($"Corner removed ({m._polygonDraft.Count} left in the draft)");
+                return;
+            }
+
+            if (m._circleCenter != null)
+            {
+                m._circleCenter = null;
+                Say("Center cleared");
+                return;
+            }
+
+            if (m._hovered == null)
+            {
+                Say("No mark under the crosshair", true);
+                return;
+            }
+
+            if (m._hovered.Kind == MarkerKind.Path && m._hoveredWaypoint >= 0 && m._hovered.waypoints.Count > 2)
+            {
+                m._hovered.waypoints.RemoveAt(m._hoveredWaypoint);
+                m._hovered.InvalidateCache();
+                MarkerStore.Save();
+                Say($"Waypoint {m._hoveredWaypoint + 1} removed from \"{m._hovered.label}\"");
+            }
+            else
+            {
+                string label = m._hovered.label;
+                MarkerStore.Remove(m._hovered);
+                m._hovered = null;
+                Say($"Removed \"{label}\"");
+            }
+
+            Swing(player);
+        }
+
+        private static void Swing(Player player)
+        {
+            ItemDrop.ItemData? right = player.GetRightItem();
+            if (right == null)
+            {
+                return;
+            }
+
+            player.FaceLookDirection();
+            player.m_zanim.SetTrigger(right.m_shared.m_attack.m_attackAnimation);
+        }
+
+        private void PlaceShot()
+        {
+            Transform cam = GameCamera.instance.transform;
+            Commit(new Marker { Kind = MarkerKind.Shot, cameraPosition = cam.position, lookDirection = cam.forward }, "Shot name");
         }
 
         private void Commit(Marker marker, string topic)
         {
             MarkerStore.Add(marker);
-            Selected = marker;
-            Flash($"Added {marker.kind} \"{marker.label}\"");
             Rename(marker, -1, topic);
         }
 
@@ -548,19 +564,17 @@ namespace cameraTools.Markers
             TextInput.instance.RequestText(new MarkerLabelReceiver(marker), topic ?? $"Rename {marker.kind}", 60);
         }
 
+        private Vector3 EyePosition()
+        {
+            return GameCamera.InFreeFly()
+                ? GameCamera.instance.transform.position
+                : Player.m_localPlayer.transform.position + Vector3.up * EyeHeight.Value;
+        }
+
         private void SampleWaypoint(bool manual)
         {
-            Vector3 position;
-            Vector3 forward = CameraTransform.forward;
-            if (GameCamera.InFreeFly())
-            {
-                position = CameraTransform.position;
-            }
-            else
-            {
-                position = Player.m_localPlayer.transform.position + Vector3.up * EyeHeight.Value;
-            }
-
+            Vector3 position = EyePosition();
+            Vector3 forward = GameCamera.instance.transform.forward;
             _lastSampleTime = Time.time;
             if (!manual && _draft.Count > 0)
             {
@@ -576,7 +590,9 @@ namespace cameraTools.Markers
             _draft.Add(new Waypoint { position = position, forward = forward, hold = 0f });
             if (manual)
             {
-                Flash($"Waypoint {_draft.Count} added");
+                Say(_draft.Count >= 2
+                    ? $"Waypoint {_draft.Count}. Click again without moving to finish the path."
+                    : "Waypoint 1. Walk on and click for the next one.");
             }
         }
 
@@ -586,7 +602,7 @@ namespace cameraTools.Markers
             if (_draft.Count < 2)
             {
                 _draft.Clear();
-                Flash("Path discarded: needs at least two waypoints");
+                Say("Path discarded: it needs at least two waypoints", true);
                 return;
             }
 
@@ -601,7 +617,7 @@ namespace cameraTools.Markers
             if (_polygonDraft.Count < 3)
             {
                 _polygonDraft.Clear();
-                Flash("Polygon discarded: needs at least three vertices");
+                Say("Area discarded: it needs at least three corners", true);
                 return;
             }
 
@@ -617,65 +633,27 @@ namespace cameraTools.Markers
             Commit(area, "Area name");
         }
 
-        public static void Flash(string text)
+        private void ClearDrafts()
         {
-            if (_instance == null) return;
-            _instance._flash = text;
-            _instance._flashUntil = Time.time + 3f;
+            _draft.Clear();
+            _polygonDraft.Clear();
+            _circleCenter = null;
+            _recording = false;
         }
 
-        public static string StatusLine1()
+        /// <summary>Shows a message the way the game does: top left for information, center for a problem.</summary>
+        public static void Say(string text, bool problem = false)
         {
-            if (_instance == null) return "";
-            MarkerMode m = _instance;
-            if (!Active && MarkerCamera.Active)
+            Player? player = Player.m_localPlayer;
+            if (player == null)
             {
-                if (PathPlayer.IsPlaying) return $"CAMERA  playing path \"{PathPlayer.PlayingLabel}\"";
-                return $"CAMERA  {MarkerCamera.What}";
+                return;
             }
 
-            CultureInfo ci = CultureInfo.InvariantCulture;
-            switch (m._tool)
-            {
-                case MarkerKind.Area:
-                    return m._shape switch
-                    {
-                        AreaShape.Circle => $"AREA circle r={m._radius.ToString("F0", ci)}   scroll: radius   ctrl+scroll: rotate   {ShapeKey.Value.MainKey}: shape",
-                        AreaShape.Rectangle => $"AREA rect {m._width.ToString("F0", ci)}x{m._depth.ToString("F0", ci)} rot={m._rotation.ToString("F0", ci)}   scroll: width   shift+scroll: depth   ctrl+scroll: rotate   {ShapeKey.Value.MainKey}: shape",
-                        _ => $"AREA polygon {m._polygonDraft.Count} vertices   click: add vertex   click first vertex or {FinishKey.Value.MainKey}: close   {DeleteKey.Value.MainKey}: undo   {ShapeKey.Value.MainKey}: shape"
-                    };
-                case MarkerKind.Point:
-                    return "POINT   click: place under crosshair";
-                case MarkerKind.Shot:
-                    return "SHOT   click: save this camera view";
-                default:
-                    return $"PATH {m._draft.Count} pts{(m._recording ? "  REC" : "")}   click: waypoint   {RecordPathKey.Value.MainKey}: record   {FinishKey.Value.MainKey}: finish   {DeleteKey.Value.MainKey}: undo";
-            }
+            player.Message(problem ? MessageHud.MessageType.Center : MessageHud.MessageType.TopLeft, text);
         }
 
-        public static string StatusLine2()
-        {
-            if (_instance == null) return "";
-            MarkerMode m = _instance;
-            if (Time.time < m._flashUntil)
-            {
-                return m._flash;
-            }
-
-            if (!Active && MarkerCamera.Active)
-            {
-                return $"{ReturnKey.Value.MainKey}: return to your character   {ToggleKey.Value.MainKey}: marker mode   Tab: marker panel";
-            }
-
-            if (m._hovered != null)
-            {
-                return $"looking at {m._hovered.kind} \"{m._hovered.label}\"{(m._hoveredWaypoint >= 0 ? $" wp {m._hoveredWaypoint + 1}" : "")}   {EditKey.Value.MainKey}: rename   {DeleteKey.Value.MainKey}: delete";
-            }
-
-            string back = GameCamera.InFreeFly() ? $"   {ReturnKey.Value.MainKey}: return to character" : "";
-            return $"{MarkerStore.ActiveBuild.name}: {MarkerStore.Markers.Count} markers   {CycleToolKey.Value.MainKey}: next tool   {ToggleKey.Value.MainKey}: exit{back}   Tab: panel";
-        }
-
+        /// <summary>Draws the in-progress area, circle or path over the world while the tool is out.</summary>
         public static void DrawPreview(float alpha)
         {
             if (_instance == null)
@@ -688,51 +666,56 @@ namespace cameraTools.Markers
             color.a *= alpha;
             switch (m._tool)
             {
-                case MarkerKind.Area:
-                    if (m._shape == AreaShape.Polygon)
+                case MarkerKind.Area when m._shape == AreaShape.Polygon:
+                {
+                    Color poly = MarkerRenderer.AreaColor;
+                    poly.a *= alpha;
+                    for (int i = 0; i < m._polygonDraft.Count; i++)
                     {
-                        Color poly = MarkerRenderer.AreaColor;
-                        poly.a *= alpha;
-                        for (int i = 0; i < m._polygonDraft.Count; i++)
+                        MarkerRenderer.DrawPost(m._polygonDraft[i], poly, 1.2f);
+                        if (i > 0)
                         {
-                            MarkerRenderer.DrawPost(m._polygonDraft[i], poly, 1.2f);
-                            if (i > 0)
-                            {
-                                MarkerRenderer.Line(m._polygonDraft[i - 1] + Vector3.up * 0.1f, m._polygonDraft[i] + Vector3.up * 0.1f, poly);
-                            }
-                        }
-
-                        if (m._polygonDraft.Count > 0 && m._hasPreviewPoint)
-                        {
-                            MarkerRenderer.Line(m._polygonDraft[m._polygonDraft.Count - 1] + Vector3.up * 0.1f, m._previewPoint + Vector3.up * 0.1f, color);
-                            if (m._polygonDraft.Count >= 2)
-                            {
-                                Color faint = poly;
-                                faint.a *= 0.4f;
-                                MarkerRenderer.Line(m._previewPoint + Vector3.up * 0.1f, m._polygonDraft[0] + Vector3.up * 0.1f, faint);
-                            }
-                        }
-
-                        if (m._hasPreviewPoint)
-                        {
-                            MarkerRenderer.DrawCross(m._previewPoint + Vector3.up * 0.1f, color, 0.5f);
+                            MarkerRenderer.Line(m._polygonDraft[i - 1] + Vector3.up * 0.1f, m._polygonDraft[i] + Vector3.up * 0.1f, poly);
                         }
                     }
-                    else if (m._hasPreviewPoint && m._previewOutline != null)
+
+                    if (m._polygonDraft.Count > 0 && m._hasPreviewPoint)
                     {
-                        MarkerRenderer.DrawOutline(m._previewOutline, color);
-                        MarkerRenderer.DrawCross(m._previewPoint + Vector3.up * 0.2f, color, 0.6f);
+                        MarkerRenderer.Line(m._polygonDraft[m._polygonDraft.Count - 1] + Vector3.up * 0.1f, m._previewPoint + Vector3.up * 0.1f, color);
+                        if (m._polygonDraft.Count >= 2)
+                        {
+                            Color faint = poly;
+                            faint.a *= 0.4f;
+                            MarkerRenderer.Line(m._previewPoint + Vector3.up * 0.1f, m._polygonDraft[0] + Vector3.up * 0.1f, faint);
+                        }
                     }
 
                     break;
-                case MarkerKind.Point:
+                }
+                case MarkerKind.Area:
+                {
+                    if (m._circleCenter == null)
+                    {
+                        break;
+                    }
+
+                    Color ring = MarkerRenderer.AreaColor;
+                    ring.a *= alpha;
+                    Vector3 center = m._circleCenter.Value;
+                    MarkerRenderer.DrawPost(center, ring, 1.2f);
                     if (m._hasPreviewPoint)
                     {
-                        MarkerRenderer.DrawPost(m._previewPoint, color, 1.5f);
+                        Vector3 flat = m._previewPoint - center;
+                        flat.y = 0f;
+                        float radius = Mathf.Clamp(flat.magnitude, 1f, 120f);
+                        MarkerRenderer.DrawOutline(MarkerRenderer.BuildOutline(center, AreaShape.Circle, radius, radius * 2f, radius * 2f, 0f), color);
+                        MarkerRenderer.Line(center + Vector3.up * 0.1f, m._previewPoint + Vector3.up * 0.1f, color);
                     }
 
                     break;
+                }
                 case MarkerKind.Path:
+                {
                     Color pathColor = MarkerRenderer.PathColor;
                     pathColor.a *= alpha;
                     if (m._draft.Count > 0)
@@ -742,6 +725,7 @@ namespace cameraTools.Markers
                     }
 
                     break;
+                }
             }
         }
     }

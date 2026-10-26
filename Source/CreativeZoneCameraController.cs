@@ -230,7 +230,6 @@ namespace cameraTools
 
             StopMove();
             PathPlayer.Stop();
-            MarkerVisibility.HideForCapture();
             SetFreeFly(true);
             _instance._orbitOrigin = origin;
             _instance._orbitRadius = horizontal.magnitude;
@@ -279,7 +278,6 @@ namespace cameraTools
 
             StopOrbit();
             PathPlayer.Stop();
-            MarkerVisibility.HideForCapture();
             SetFreeFly(true);
             _instance._moveStart = start;
             _instance._moveEnd = end;
@@ -568,7 +566,6 @@ namespace cameraTools
                 {
                     SetFreeFly(true);
                     SetHudVisible(false);
-                    MarkerVisibility.HideForCapture();
                     args.Context.AddString("OK: camera prepared");
                     args.Context.AddString(BuildStatus(ParseOrigin(args, 1)));
                 }

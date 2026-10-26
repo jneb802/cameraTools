@@ -27,28 +27,35 @@ ct_place <cameraX cameraY cameraZ> <lookX lookY lookZ>
 ct_move <start|stop|status> [duration] [startX startY startZ endX endY endZ] [lookX lookY lookZ] [linear|ease|in|out]
 ct_orbit <start|stop|status> [duration] [degrees] [x y z]
 ct_screenshot [filename]
-ct_mark <list [kind|all]|build [list|new <name>|use <id|name>]|panel|return|show|hide|auto|mode on|off|export|reload|clear [kind]|remove <id|label>|goto <id|label>|shot <label>|point <label> [x y z]>
+ct_mark <tool|list [kind|all]|build [list|new <name>|use <id|name>]|return|show|hide|auto|export|reload|clear [kind]|remove <id|label>|goto <id|label>|shot <label>|point <label> [x y z]>
 ct_path <list|play <id|label> [duration] [waypoints|forward|look x y z]|stop|status|preview <id|label>>
 ```
 
 ## Markers
 
-Markers are a client-side overlay for planning shots of a build. They are never written to the world and are hidden automatically whenever `ct_move`, `ct_orbit`, `ct_path play` or `ct_prepare` runs, so a recording cannot contain one. They are stored per world as JSON under `BepInEx/config/cameraTools/markers/<world>.json`.
+Markers are a client-side overlay for planning shots of a build. They are never written to the world and only render while the **Marker tool** is in your hand and the camera is on your character, so a free-camera recording cannot contain one. They are stored per world as JSON under `BepInEx/config/cameraTools/markers/<world>.json`, grouped into **builds** so one world file can hold several bases (`ct_mark build new <name>`, `ct_mark build use <name>`).
 
-Press `F7` to enter marker mode. A status strip under the compass shows the current tool and keys. Everything is rebindable in the config file. Markers are grouped into **builds**; the overlay and the panel show the active build only, so one world file can hold several bases.
+The Marker tool is a hammer. Craft it from the hands tab for free, or type `ct_mark tool` to get it equipped. It works like any build tool:
 
-Open the inventory (`Tab`) and click the camera icon beside the player panel (left of the Praetoris server guide icon when that mod is installed) for the **marker dialog**: pick the tool and shape, switch builds (`<`, `>`, New, Rename), toggle marker mode and overlay visibility, browse the active build's markers, edit the selected marker's label, note and type, and Go to, Play path, Preview or Delete it. `Escape` closes the dialog. Naming a new marker uses the game's own text dialog.
+| Action | Does |
+|---|---|
+| Right click | opens the build menu with the five marks: Area, Round area, Point of interest, Shot, Path |
+| Left click | places the selected mark at the ghost; the game's text dialog asks for its name |
+| Middle click or `Delete` | removes the mark under the crosshair (a path waypoint if you look at one), or the last point of the area or path being drawn |
+| `E` | renames the mark under the crosshair; on a path waypoint it sets the hold time in seconds |
+| `G` | starts and stops live path recording while you walk |
+| `F` | finishes the area or path being drawn |
+| `F8` | returns the camera to your character after `ct_mark goto`, `ct_path play` or `ct_path preview` |
 
-Go to, Preview and path playback move the free camera. Press `F8` (or the dialog's Return camera button, or `ct_mark return`) to leave the free camera and return to your character; the status strip shows this hint whenever the camera is away.
-
-| Tool | Place with | What it stores |
+| Mark | Place with | What it stores |
 |---|---|---|
-| Area | left click on the ground; scroll changes the radius (or width), shift+scroll the depth, ctrl+scroll rotates, `R` cycles circle, rectangle and polygon. Polygon: click each corner, then click the first corner again or press `F` to close | a labelled circle, rectangle or polygon with a type tag (room, exterior, courtyard, detail, hero, entrance, other) |
-| Point | left click on anything | a labelled post marking one item of interest, with a note |
-| Shot | left click while looking through the camera you want | the camera position and look direction |
-| Path | left click adds a waypoint at the camera (freefly) or at eye height (walking); `G` starts and stops live recording while you move; `F` finishes; `Delete` removes the last waypoint | an ordered list of waypoints with look directions and optional hold times |
+| Area | click each corner, then click the first corner again to close | a labelled polygon with a type tag |
+| Round area | click the center, then click at the edge | a labelled circle |
+| Point of interest | click the thing | a labelled post marking one item worth a close-up |
+| Shot | click while looking through the camera you want; works from the free camera too | the camera position and look direction |
+| Path | click to drop a waypoint where you stand, looking where you look; click again without moving to finish | an ordered list of waypoints with look directions and optional hold times |
 
-`T` cycles the tool. Look at a marker and press `E` to rename it (on a path waypoint, `E` sets its hold time), or `Delete` to remove it. Left click does not attack and `E` does not interact with the world while marker mode is on.
+Wards, no-build zones, deep snow and dungeons do not block marks, and the tool never removes real pieces.
 
 `ct_path play <label> [duration] [waypoints|forward|look x y z]` flies the camera along a path on a smooth spline at constant speed, pausing at waypoints with a hold time. The look direction is interpolated between waypoints by default, follows the travel direction with `forward`, or stays on a fixed target with `look x y z`. Without a duration the path plays at walking speed, about 1.6 m/s.
 

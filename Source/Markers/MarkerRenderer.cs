@@ -69,7 +69,7 @@ namespace cameraTools.Markers
             }
 
             bool showStored = MarkerVisibility.Visible;
-            bool showPreview = MarkerMode.Active;
+            bool showPreview = MarkerMode.Placing;
             if (!showStored && !showPreview)
             {
                 return;

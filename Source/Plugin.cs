@@ -15,7 +15,7 @@ namespace cameraTools
     public class cameraToolsPlugin : BaseUnityPlugin
     {
         private const string ModName = "cameraTools";
-        private const string ModVersion = "1.1.0";
+        private const string ModVersion = "1.2.0";
         private const string Author = "modAuthorName";
         private const string ModGUID = Author + "." + ModName;
         private static string ConfigFileName = ModGUID + ".cfg";
@@ -48,8 +48,6 @@ namespace cameraTools
             gameObject.AddComponent<ReplayTimelinePanel>();
             gameObject.AddComponent<MarkerMode>();
             gameObject.AddComponent<MarkerRenderer>();
-            gameObject.AddComponent<MarkerStatusHud>();
-            gameObject.AddComponent<MarkerPanel>();
             gameObject.AddComponent<PathPlayer>();
             CreativeZoneCameraController.RegisterCommands();
             ReplayCommands.Register();
