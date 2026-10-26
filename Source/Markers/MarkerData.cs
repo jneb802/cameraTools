@@ -73,9 +73,7 @@ namespace cameraTools.Markers
         // Path
         public List<Waypoint> waypoints = new();
 
-        [NonSerialized] [JsonIgnore] public List<Vector3>? CachedOutline;
         [NonSerialized] [JsonIgnore] public List<Vector3>? CachedSpline;
-        [NonSerialized] [JsonIgnore] public float CacheTime;
 
         public MarkerKind Kind
         {
@@ -122,9 +120,7 @@ namespace cameraTools.Markers
 
         public void InvalidateCache()
         {
-            CachedOutline = null;
             CachedSpline = null;
-            CacheTime = 0f;
         }
 
         public static MarkerKind ParseKind(string value)

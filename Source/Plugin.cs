@@ -48,6 +48,7 @@ namespace cameraTools
             gameObject.AddComponent<ReplayTimelinePanel>();
             gameObject.AddComponent<MarkerMode>();
             gameObject.AddComponent<MarkerRenderer>();
+            gameObject.AddComponent<AreaRulerManager>();
             gameObject.AddComponent<PathPlayer>();
             CreativeZoneCameraController.RegisterCommands();
             ReplayCommands.Register();

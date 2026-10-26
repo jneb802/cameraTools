@@ -6,7 +6,6 @@ namespace cameraTools.Markers
     public class MarkerRenderer : MonoBehaviour
     {
         private static Material? _lineMaterial;
-        private static readonly int GroundMask = LayerMask.GetMask("Default", "static_solid", "Default_small", "piece", "terrain");
         private const float LabelRange = 160f;
         private GUIStyle? _labelStyle;
 
@@ -122,8 +121,7 @@ namespace cameraTools.Markers
             switch (marker.Kind)
             {
                 case MarkerKind.Area:
-                    DrawArea(marker, color);
-                    break;
+                    break; // drawn by AreaRulerManager with the game's own radius-marker bars
                 case MarkerKind.Point:
                     DrawPost(marker.position, color, 1.5f);
                     break;
@@ -134,104 +132,6 @@ namespace cameraTools.Markers
                     DrawPath(marker, color, hoveredWaypoint);
                     break;
             }
-        }
-
-        public static void DrawArea(Marker marker, Color color)
-        {
-            if (marker.CachedOutline == null || Time.time - marker.CacheTime > 2f)
-            {
-                marker.CachedOutline = marker.Shape == AreaShape.Polygon
-                    ? BuildPolygonOutline(marker.vertices)
-                    : BuildOutline(marker.position, marker.Shape, marker.radius, marker.width, marker.depth, marker.rotation);
-                marker.CacheTime = Time.time;
-            }
-
-            DrawOutline(marker.CachedOutline, color);
-            DrawCross(marker.position + Vector3.up * 0.2f, color, 0.6f);
-        }
-
-        public static void DrawOutline(List<Vector3> outline, Color color)
-        {
-            int count = outline.Count;
-            if (count < 2)
-            {
-                return;
-            }
-
-            Color faint = color;
-            faint.a *= 0.5f;
-            for (int i = 0; i < count; i++)
-            {
-                Vector3 a = outline[i];
-                Vector3 b = outline[(i + 1) % count];
-                Line(a + Vector3.up * 0.1f, b + Vector3.up * 0.1f, color);
-                Line(a + Vector3.up * 1.6f, b + Vector3.up * 1.6f, faint);
-                if (i % Mathf.Max(1, count / 8) == 0)
-                {
-                    Line(a + Vector3.up * 0.1f, a + Vector3.up * 1.6f, faint);
-                }
-            }
-        }
-
-        public static List<Vector3> BuildOutline(Vector3 center, AreaShape shape, float radius, float width, float depth, float rotation)
-        {
-            List<Vector3> points = new();
-            if (shape == AreaShape.Circle)
-            {
-                int segments = Mathf.Clamp(Mathf.RoundToInt(radius * 6f), 24, 96);
-                for (int i = 0; i < segments; i++)
-                {
-                    float angle = i * Mathf.PI * 2f / segments;
-                    points.Add(SnapToGround(center + new Vector3(Mathf.Sin(angle) * radius, 0f, Mathf.Cos(angle) * radius)));
-                }
-            }
-            else
-            {
-                Quaternion rot = Quaternion.Euler(0f, rotation, 0f);
-                Vector3 hx = rot * Vector3.right * (width / 2f);
-                Vector3 hz = rot * Vector3.forward * (depth / 2f);
-                Vector3[] corners = { center - hx - hz, center + hx - hz, center + hx + hz, center - hx + hz };
-                for (int c = 0; c < 4; c++)
-                {
-                    Vector3 a = corners[c];
-                    Vector3 b = corners[(c + 1) % 4];
-                    int steps = Mathf.Clamp(Mathf.RoundToInt(Vector3.Distance(a, b) / 1.5f), 1, 32);
-                    for (int s = 0; s < steps; s++)
-                    {
-                        points.Add(SnapToGround(Vector3.Lerp(a, b, (float)s / steps)));
-                    }
-                }
-            }
-
-            return points;
-        }
-
-        public static List<Vector3> BuildPolygonOutline(List<Vector3> vertices)
-        {
-            List<Vector3> points = new();
-            int n = vertices.Count;
-            for (int c = 0; c < n; c++)
-            {
-                Vector3 a = vertices[c];
-                Vector3 b = vertices[(c + 1) % n];
-                int steps = Mathf.Clamp(Mathf.RoundToInt(Vector3.Distance(a, b) / 1.5f), 1, 48);
-                for (int s = 0; s < steps; s++)
-                {
-                    points.Add(SnapToGround(Vector3.Lerp(a, b, (float)s / steps)));
-                }
-            }
-
-            return points;
-        }
-
-        public static Vector3 SnapToGround(Vector3 pos)
-        {
-            if (Physics.Raycast(pos + Vector3.up * 30f, Vector3.down, out RaycastHit hit, 80f, GroundMask))
-            {
-                pos.y = hit.point.y;
-            }
-
-            return pos;
         }
 
         public static void DrawPost(Vector3 basePos, Color color, float height)

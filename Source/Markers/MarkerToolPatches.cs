@@ -105,6 +105,42 @@ namespace cameraTools.Markers
         }
     }
 
+    // The wheel sizes round and square areas; keep the camera from zooming meanwhile.
+    [HarmonyPatch(typeof(ZInput), nameof(ZInput.GetMouseScrollWheel))]
+    internal static class ConsumeScrollWhileSizingArea
+    {
+        private static bool Prefix(ref float __result)
+        {
+            if (!MarkerMode.ConsumeScroll)
+            {
+                return true;
+            }
+
+            __result = 0f;
+            return false;
+        }
+    }
+
+    // Show the live radius or width/depth under the piece description, as Infinity Hammer does.
+    [HarmonyPatch(typeof(Hud), "SetupPieceInfo")]
+    internal static class AreaSizeInPieceInfo
+    {
+        private static void Postfix(Hud __instance, Piece piece)
+        {
+            if (piece == null || __instance.m_pieceDescription == null || !MarkerTool.TryGetTool(piece, out MarkerKind kind, out AreaShape shape))
+            {
+                return;
+            }
+
+            if (kind != MarkerKind.Area || shape == AreaShape.Polygon)
+            {
+                return;
+            }
+
+            __instance.m_pieceDescription.text += "\n" + MarkerMode.SizeReadout();
+        }
+    }
+
     // E renames the marker under the crosshair; do not open doors or chests at the same time.
     [HarmonyPatch(typeof(Player), "Interact", typeof(GameObject), typeof(bool), typeof(bool))]
     internal static class BlockInteractWhileHoveringMarker

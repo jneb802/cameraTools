@@ -117,6 +117,46 @@ namespace cameraTools.Markers
         public static MarkerKind Tool => _instance?._tool ?? MarkerKind.Point;
         public static AreaShape Shape => _instance?._shape ?? AreaShape.Circle;
 
+        /// <summary>True while the wheel sizes a round or square area, so the camera must not zoom.</summary>
+        public static bool ConsumeScroll =>
+            _instance != null && Placing && _instance._tool == MarkerKind.Area && _instance._shape != AreaShape.Polygon && _instance._hasPreviewPoint && !UiBlocked();
+
+        /// <summary>The round or square area being placed, for the ruler that draws it at the ghost.</summary>
+        public static bool PreviewArea(out AreaShape shape, out Vector3 center, out float radius, out float width, out float depth, out float rotation)
+        {
+            MarkerMode? m = _instance;
+            if (m == null || !Placing || m._tool != MarkerKind.Area || m._shape == AreaShape.Polygon || !m._hasPreviewPoint || UiBlocked())
+            {
+                shape = AreaShape.Circle;
+                center = Vector3.zero;
+                radius = width = depth = rotation = 0f;
+                return false;
+            }
+
+            shape = m._shape;
+            center = m._previewPoint;
+            radius = m._radius;
+            width = m._width;
+            depth = m._depth;
+            rotation = m._rotation;
+            return true;
+        }
+
+        /// <summary>Live size text for the build HUD, in Infinity Hammer's style.</summary>
+        public static string SizeReadout()
+        {
+            MarkerMode? m = _instance;
+            if (m == null)
+            {
+                return "";
+            }
+
+            CultureInfo ci = CultureInfo.InvariantCulture;
+            return m._shape == AreaShape.Circle
+                ? $"r: {m._radius.ToString("F1", ci)}"
+                : $"w: {m._width.ToString("F1", ci)}, d: {m._depth.ToString("F1", ci)}, a: {m._rotation.ToString("F0", ci)}";
+        }
+
         private MarkerKind _tool = MarkerKind.Point;
         private AreaShape _shape = AreaShape.Circle;
         private bool _hasPreviewPoint;
@@ -124,7 +164,10 @@ namespace cameraTools.Markers
 
         private readonly List<Waypoint> _draft = new();
         private readonly List<Vector3> _polygonDraft = new();
-        private Vector3? _circleCenter;
+        private float _radius = 6f;
+        private float _width = 10f;
+        private float _depth = 10f;
+        private float _rotation;
         private bool _recording;
         private float _lastSampleTime;
 
@@ -218,6 +261,7 @@ namespace cameraTools.Markers
 
             UpdatePreviewPoint(player, freeFly);
             UpdateHover();
+            UpdateAreaSize();
 
             if (_recording && Time.time - _lastSampleTime >= RecordInterval.Value)
             {
@@ -283,9 +327,42 @@ namespace cameraTools.Markers
                 FinishPolygon();
             }
 
-            _circleCenter = null;
             _tool = kind;
             _shape = shape;
+        }
+
+        private void UpdateAreaSize()
+        {
+            if (_tool != MarkerKind.Area || _shape == AreaShape.Polygon || !_hasPreviewPoint || ZInput.m_instance == null)
+            {
+                return;
+            }
+
+            float scroll = ZInput.m_instance.Internal_GetMouseScrollWheel();
+            if (Mathf.Abs(scroll) < 0.0001f)
+            {
+                return;
+            }
+
+            float step = scroll > 0f ? 1f : -1f;
+            bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+            bool ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+            if (ctrl)
+            {
+                _rotation = (_rotation + step * 15f + 360f) % 360f;
+            }
+            else if (_shape == AreaShape.Circle)
+            {
+                _radius = Mathf.Clamp(_radius + step * (_radius >= 10f ? 2f : 1f), 0.5f, 120f);
+            }
+            else if (shift)
+            {
+                _depth = Mathf.Clamp(_depth + step * 2f, 1f, 200f);
+            }
+            else
+            {
+                _width = Mathf.Clamp(_width + step * 2f, 1f, 200f);
+            }
         }
 
         private static void HideGhost(Player player)
@@ -427,28 +504,17 @@ namespace cameraTools.Markers
                         return false;
                     }
 
-                    if (m._circleCenter == null)
+                    m.Commit(new Marker
                     {
-                        m._circleCenter = point;
-                        Say("Center set. Click at the edge of the area.");
-                    }
-                    else
-                    {
-                        Vector3 center = m._circleCenter.Value;
-                        Vector3 flat = point - center;
-                        flat.y = 0f;
-                        Marker area = new()
-                        {
-                            Kind = MarkerKind.Area,
-                            position = center,
-                            Shape = AreaShape.Circle,
-                            radius = Mathf.Clamp(flat.magnitude, 1f, 120f),
-                            tag = "room"
-                        };
-                        m._circleCenter = null;
-                        m.Commit(area, "Area name");
-                    }
-
+                        Kind = MarkerKind.Area,
+                        position = point,
+                        Shape = shape,
+                        radius = m._radius,
+                        width = m._width,
+                        depth = m._depth,
+                        rotation = m._rotation,
+                        tag = "room"
+                    }, "Area name");
                     Swing(player);
                     return true;
 
@@ -490,13 +556,6 @@ namespace cameraTools.Markers
             {
                 m._polygonDraft.RemoveAt(m._polygonDraft.Count - 1);
                 Say($"Corner removed ({m._polygonDraft.Count} left in the draft)");
-                return;
-            }
-
-            if (m._circleCenter != null)
-            {
-                m._circleCenter = null;
-                Say("Center cleared");
                 return;
             }
 
@@ -637,7 +696,6 @@ namespace cameraTools.Markers
         {
             _draft.Clear();
             _polygonDraft.Clear();
-            _circleCenter = null;
             _recording = false;
         }
 
@@ -688,28 +746,6 @@ namespace cameraTools.Markers
                             faint.a *= 0.4f;
                             MarkerRenderer.Line(m._previewPoint + Vector3.up * 0.1f, m._polygonDraft[0] + Vector3.up * 0.1f, faint);
                         }
-                    }
-
-                    break;
-                }
-                case MarkerKind.Area:
-                {
-                    if (m._circleCenter == null)
-                    {
-                        break;
-                    }
-
-                    Color ring = MarkerRenderer.AreaColor;
-                    ring.a *= alpha;
-                    Vector3 center = m._circleCenter.Value;
-                    MarkerRenderer.DrawPost(center, ring, 1.2f);
-                    if (m._hasPreviewPoint)
-                    {
-                        Vector3 flat = m._previewPoint - center;
-                        flat.y = 0f;
-                        float radius = Mathf.Clamp(flat.magnitude, 1f, 120f);
-                        MarkerRenderer.DrawOutline(MarkerRenderer.BuildOutline(center, AreaShape.Circle, radius, radius * 2f, radius * 2f, 0f), color);
-                        MarkerRenderer.Line(center + Vector3.up * 0.1f, m._previewPoint + Vector3.up * 0.1f, color);
                     }
 
                     break;

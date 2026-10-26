@@ -19,6 +19,7 @@ namespace cameraTools.Markers
 
         public const string AreaPiece = "ct_marker_area";
         public const string CirclePiece = "ct_marker_circle";
+        public const string SquarePiece = "ct_marker_square";
         public const string PointPiece = "ct_marker_point";
         public const string ShotPiece = "ct_marker_shot";
         public const string PathPiece = "ct_marker_path";
@@ -27,6 +28,7 @@ namespace cameraTools.Markers
         {
             [AreaPiece] = (MarkerKind.Area, AreaShape.Polygon),
             [CirclePiece] = (MarkerKind.Area, AreaShape.Circle),
+            [SquarePiece] = (MarkerKind.Area, AreaShape.Rectangle),
             [PointPiece] = (MarkerKind.Point, AreaShape.Circle),
             [ShotPiece] = (MarkerKind.Shot, AreaShape.Circle),
             [PathPiece] = (MarkerKind.Path, AreaShape.Circle),
@@ -86,6 +88,40 @@ namespace cameraTools.Markers
 
             player.EquipItem(existing);
             return $"OK: {ItemName} equipped; right click picks the mark, left click places, middle click removes";
+        }
+
+        /// <summary>Selects a mark in the equipped tool's build menu by name: area, round, square, point, shot or path.</summary>
+        public static string Pick(Player player, string name)
+        {
+            if (!IsEquipped(player) || player.m_buildPieces == null)
+            {
+                return "ERROR: the marker tool is not equipped";
+            }
+
+            string prefab = name.ToLowerInvariant() switch
+            {
+                "area" or "polygon" => AreaPiece,
+                "round" or "circle" => CirclePiece,
+                "square" or "rectangle" or "rect" => SquarePiece,
+                "point" => PointPiece,
+                "shot" => ShotPiece,
+                "path" => PathPiece,
+                _ => ""
+            };
+            if (prefab.Length == 0)
+            {
+                return "Usage: ct_mark pick <area|round|square|point|shot|path>";
+            }
+
+            List<Piece> pieces = player.m_buildPieces.GetPiecesInSelectedCategory();
+            int index = pieces.FindIndex(p => p.gameObject.name == prefab);
+            if (index < 0)
+            {
+                return $"ERROR: {prefab} is not in the build menu";
+            }
+
+            player.SetSelectedPiece(new Vector2Int(index % PieceTable.m_gridWidth, index / PieceTable.m_gridWidth));
+            return $"OK: selected {pieces[index].m_name}";
         }
 
         /// <summary>Creates the item once and makes sure the given ObjectDB knows it and its recipe.</summary>
@@ -159,8 +195,11 @@ namespace cameraTools.Markers
                 "An area of the build worth a section of the tour. Click each corner in order; click the first corner again to close it. Delete removes the last corner.",
                 MarkerIcons.Area(), material));
             _table.m_pieces.Add(CreatePiece(CirclePiece, "Round area",
-                "A round area. Click its center, then click again at its edge to set the radius.",
+                "A round area around the aim point. Scroll to change the radius, then click to place.",
                 MarkerIcons.Circle(), material));
+            _table.m_pieces.Add(CreatePiece(SquarePiece, "Square area",
+                "A square or rectangular area around the aim point. Scroll sets the width, Shift+scroll the depth, Ctrl+scroll turns it; click to place.",
+                MarkerIcons.Square(), material));
             _table.m_pieces.Add(CreatePiece(PointPiece, "Point of interest",
                 "One thing worth a close-up. Click it; the name you type becomes the call-out.",
                 MarkerIcons.Point(), material));
@@ -261,6 +300,7 @@ namespace cameraTools.Markers
         public static Sprite Shot() => Get("shot", 128, Camera);
         public static Sprite Area() => Get("area", 128, Polygon);
         public static Sprite Circle() => Get("circle", 128, Ring);
+        public static Sprite Square() => Get("square", 128, Box);
         public static Sprite Point() => Get("point", 128, Pin);
         public static Sprite Path() => Get("path", 128, Route);
 
@@ -318,6 +358,20 @@ namespace cameraTools.Markers
         {
             Vector2[] pts = { new(22f, 36f), new(58f, 18f), new(108f, 44f), new(96f, 104f), new(34f, 96f) };
             return Outline(fx, fy, pts, true);
+        }
+
+        private static Color? Box(float fx, float fy)
+        {
+            bool outer = RoundedRect(fx, fy, 18f, 18f, 110f, 110f, 6f);
+            bool inner = RoundedRect(fx, fy, 32f, 32f, 96f, 96f, 4f);
+            float dx = fx - 64f;
+            float dy = fy - 64f;
+            float r = Mathf.Sqrt(dx * dx + dy * dy);
+            if (outer && !inner) return Dark;
+            if (RoundedRect(fx, fy, 22f, 22f, 106f, 106f, 5f) && !RoundedRect(fx, fy, 28f, 28f, 100f, 100f, 3f)) return Gold;
+            if (r <= 7f) return Dark;
+            if (r <= 4f) return Light;
+            return null;
         }
 
         private static Color? Ring(float fx, float fy)

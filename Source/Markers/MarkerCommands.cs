@@ -21,7 +21,7 @@ namespace cameraTools.Markers
             _registered = true;
 
             _ = new Terminal.ConsoleCommand("ct_mark",
-                "Markers: ct_mark <tool|list [kind|all]|build [list|new <name>|use <id|name>]|return|show|hide|auto|export|reload|clear [kind]|remove <id|label>|goto <id|label>|shot <label>|point <label> [x y z]>",
+                "Markers: ct_mark <tool|pick <area|round|square|point|shot|path>|list [kind|all]|build [list|new <name>|use <id|name>]|return|show|hide|auto|export|reload|clear [kind]|remove <id|label>|goto <id|label>|shot <label>|point <label> [x y z]>",
                 args =>
                 {
                     try
@@ -89,6 +89,9 @@ namespace cameraTools.Markers
                 case "tool":
                     if (Player.m_localPlayer == null) throw new InvalidOperationException("No local player.");
                     return MarkerTool.GiveTool(Player.m_localPlayer);
+                case "pick":
+                    if (Player.m_localPlayer == null) throw new InvalidOperationException("No local player.");
+                    return MarkerTool.Pick(Player.m_localPlayer, args.Length >= 3 ? args[2] : "");
                 case "return":
                     MarkerCamera.Return();
                     return $"OK: freefly={GameCamera.InFreeFly()}";
@@ -163,7 +166,7 @@ namespace cameraTools.Markers
                     return $"OK: {point.Describe()}";
                 }
                 default:
-                    return "Usage: ct_mark <tool|list [kind|all]|build [list|new <name>|use <id|name>]|return|show|hide|auto|export|reload|clear [kind]|remove <id|label>|goto <id|label>|shot <label>|point <label> [x y z]>";
+                    return "Usage: ct_mark <tool|pick <mark>|list [kind|all]|build [list|new <name>|use <id|name>]|return|show|hide|auto|export|reload|clear [kind]|remove <id|label>|goto <id|label>|shot <label>|point <label> [x y z]>";
             }
         }
 
