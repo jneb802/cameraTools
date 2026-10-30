@@ -74,6 +74,10 @@
             <HintPath>$(VALHEIM_MANAGED)/UnityEngine.IMGUIModule.dll</HintPath>
             <Private>false</Private>
         </Reference>
+        <Reference Include="Newtonsoft.Json">
+            <HintPath>$(VALHEIM_MANAGED)/Newtonsoft.Json.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
         <Reference Include="UnityEngine.TextRenderingModule">
             <HintPath>$(VALHEIM_MANAGED)/UnityEngine.TextRenderingModule.dll</HintPath>
             <Private>false</Private>
