@@ -14,7 +14,7 @@ namespace cameraTools
     public class cameraToolsPlugin : BaseUnityPlugin
     {
         private const string ModName = "cameraTools";
-        private const string ModVersion = "1.0.0";
+        private const string ModVersion = "1.0.1";
         private const string Author = "modAuthorName";
         private const string ModGUID = Author + "." + ModName;
         private static string ConfigFileName = ModGUID + ".cfg";

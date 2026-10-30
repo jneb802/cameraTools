@@ -52,25 +52,25 @@ namespace cameraTools.Replay
                     // State ints (8 bytes)
                     w.Write(e.StateF);
                     w.Write(e.StateI);
-                    // Equipment (version 3+)
+                    // Equipment (version 3+; item hashes as int since version 4)
                     w.Write(e.HasEquipment);
                     if (e.HasEquipment)
                     {
-                        w.Write(e.LeftItem ?? "");
+                        w.Write(e.LeftItem);
                         w.Write(e.LeftItemVariant);
-                        w.Write(e.RightItem ?? "");
-                        w.Write(e.ChestItem ?? "");
-                        w.Write(e.LegItem ?? "");
-                        w.Write(e.HelmetItem ?? "");
-                        w.Write(e.ShoulderItem ?? "");
+                        w.Write(e.RightItem);
+                        w.Write(e.ChestItem);
+                        w.Write(e.LegItem);
+                        w.Write(e.HelmetItem);
+                        w.Write(e.ShoulderItem);
                         w.Write(e.ShoulderItemVariant);
-                        w.Write(e.UtilityItem ?? "");
+                        w.Write(e.UtilityItem);
                         w.Write(e.TrinketItem ?? "");
-                        w.Write(e.BeardItem ?? "");
-                        w.Write(e.HairItem ?? "");
-                        w.Write(e.LeftBackItem ?? "");
+                        w.Write(e.BeardItem);
+                        w.Write(e.HairItem);
+                        w.Write(e.LeftBackItem);
                         w.Write(e.LeftBackItemVariant);
-                        w.Write(e.RightBackItem ?? "");
+                        w.Write(e.RightBackItem);
                     }
                 }
             }
@@ -150,21 +150,21 @@ namespace cameraTools.Replay
                     if (version >= 3 && r.ReadBoolean())
                     {
                         snapshot.HasEquipment = true;
-                        snapshot.LeftItem = r.ReadString();
+                        snapshot.LeftItem = ReadItemHash(r, version);
                         snapshot.LeftItemVariant = r.ReadInt32();
-                        snapshot.RightItem = r.ReadString();
-                        snapshot.ChestItem = r.ReadString();
-                        snapshot.LegItem = r.ReadString();
-                        snapshot.HelmetItem = r.ReadString();
-                        snapshot.ShoulderItem = r.ReadString();
+                        snapshot.RightItem = ReadItemHash(r, version);
+                        snapshot.ChestItem = ReadItemHash(r, version);
+                        snapshot.LegItem = ReadItemHash(r, version);
+                        snapshot.HelmetItem = ReadItemHash(r, version);
+                        snapshot.ShoulderItem = ReadItemHash(r, version);
                         snapshot.ShoulderItemVariant = r.ReadInt32();
-                        snapshot.UtilityItem = r.ReadString();
+                        snapshot.UtilityItem = ReadItemHash(r, version);
                         snapshot.TrinketItem = r.ReadString();
-                        snapshot.BeardItem = r.ReadString();
-                        snapshot.HairItem = r.ReadString();
-                        snapshot.LeftBackItem = r.ReadString();
+                        snapshot.BeardItem = ReadItemHash(r, version);
+                        snapshot.HairItem = ReadItemHash(r, version);
+                        snapshot.LeftBackItem = ReadItemHash(r, version);
                         snapshot.LeftBackItemVariant = r.ReadInt32();
-                        snapshot.RightBackItem = r.ReadString();
+                        snapshot.RightBackItem = ReadItemHash(r, version);
                     }
                     frame.Entities.Add(snapshot);
                 }
@@ -213,6 +213,16 @@ namespace cameraTools.Replay
             if (!Directory.Exists(dir))
                 Directory.CreateDirectory(dir);
             return dir;
+        }
+
+        // Version 3 files stored item prefab names; version 4+ store the int prefab hash
+        // that VisEquipment uses directly. Empty names map to 0 (no item).
+        private static int ReadItemHash(BinaryReader r, int version)
+        {
+            if (version >= 4)
+                return r.ReadInt32();
+            string name = r.ReadString();
+            return string.IsNullOrEmpty(name) ? 0 : name.GetStableHashCode();
         }
     }
 }

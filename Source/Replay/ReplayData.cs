@@ -28,23 +28,24 @@ namespace cameraTools.Replay
         public int StateF;
         public int StateI;
 
-        // Equipment visuals (only populated for entities with VisEquipment)
+        // Equipment visuals (only populated for entities with VisEquipment).
+        // Item fields are Valheim item prefab hashes (VisEquipment stores int hashes since 1.0).
         public bool HasEquipment;
-        public string LeftItem;
+        public int LeftItem;
         public int LeftItemVariant;
-        public string RightItem;
-        public string ChestItem;
-        public string LegItem;
-        public string HelmetItem;
-        public string ShoulderItem;
+        public int RightItem;
+        public int ChestItem;
+        public int LegItem;
+        public int HelmetItem;
+        public int ShoulderItem;
         public int ShoulderItemVariant;
-        public string UtilityItem;
-        public string TrinketItem;
-        public string BeardItem;
-        public string HairItem;
-        public string LeftBackItem;
+        public int UtilityItem;
+        public string TrinketItem; // still a prefab name in Valheim 1.0
+        public int BeardItem;
+        public int HairItem;
+        public int LeftBackItem;
         public int LeftBackItemVariant;
-        public string RightBackItem;
+        public int RightBackItem;
 
         public bool GetBool(int bit) => (AnimBools & (1 << bit)) != 0;
 
@@ -100,7 +101,7 @@ namespace cameraTools.Replay
     public class ReplayFile
     {
         public const string Magic = "VRPL";
-        public const int Version = 3;
+        public const int Version = 4;
 
         public long Timestamp;
         public float Duration;

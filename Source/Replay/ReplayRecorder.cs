@@ -169,21 +169,21 @@ namespace cameraTools.Replay
                 if (visEquip != null)
                 {
                     snapshot.HasEquipment = true;
-                    snapshot.LeftItem = visEquip.m_leftItem ?? "";
+                    snapshot.LeftItem = visEquip.m_leftItem;
                     snapshot.LeftItemVariant = visEquip.m_leftItemVariant;
-                    snapshot.RightItem = visEquip.m_rightItem ?? "";
-                    snapshot.ChestItem = visEquip.m_chestItem ?? "";
-                    snapshot.LegItem = visEquip.m_legItem ?? "";
-                    snapshot.HelmetItem = visEquip.m_helmetItem ?? "";
-                    snapshot.ShoulderItem = visEquip.m_shoulderItem ?? "";
+                    snapshot.RightItem = visEquip.m_rightItem;
+                    snapshot.ChestItem = visEquip.m_chestItem;
+                    snapshot.LegItem = visEquip.m_legItem;
+                    snapshot.HelmetItem = visEquip.m_helmetItem;
+                    snapshot.ShoulderItem = visEquip.m_shoulderItem;
                     snapshot.ShoulderItemVariant = visEquip.m_shoulderItemVariant;
-                    snapshot.UtilityItem = visEquip.m_utilityItem ?? "";
+                    snapshot.UtilityItem = visEquip.m_utilityItem;
                     snapshot.TrinketItem = visEquip.m_trinketItem ?? "";
-                    snapshot.BeardItem = visEquip.m_beardItem ?? "";
-                    snapshot.HairItem = visEquip.m_hairItem ?? "";
-                    snapshot.LeftBackItem = visEquip.m_leftBackItem ?? "";
+                    snapshot.BeardItem = visEquip.m_beardItem;
+                    snapshot.HairItem = visEquip.m_hairItem;
+                    snapshot.LeftBackItem = visEquip.m_leftBackItem;
                     snapshot.LeftBackItemVariant = visEquip.m_leftBackItemVariant;
-                    snapshot.RightBackItem = visEquip.m_rightBackItem ?? "";
+                    snapshot.RightBackItem = visEquip.m_rightBackItem;
                 }
 
                 frame.Entities.Add(snapshot);
