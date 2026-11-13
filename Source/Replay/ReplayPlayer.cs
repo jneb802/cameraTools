@@ -18,6 +18,8 @@ namespace cameraTools.Replay
         private int _lastTriggerIndex;
         private WorldStatePlayer? _worldStatePlayer;
         private ReplayMediaPlayer? _media;
+        public ReplayCameraRig? CameraRig { get; private set; }
+        public ReplayMusic? Music { get; private set; }
         private (long, uint)? _cameraTarget;
         private Vector3 _cameraOffset = new Vector3(0, 2, -6);
         private bool _localOffset;
@@ -54,9 +56,14 @@ namespace cameraTools.Replay
                 if (frame.Entities.Exists(entity => entity.ZdoUserID == user && entity.ZdoID == id)) { found = true; break; }
             if (!found) throw new ArgumentException("Recorded target does not exist; use ct_replay targets");
             cameraTools.Markers.PathPlayer.Stop();
+            CameraRig?.Clear();
             _cameraTarget = (user, id); _cameraOffset = offset; _localOffset = local;
         }
-        public void Detach() => _cameraTarget = null;
+        public void Detach()
+        {
+            _cameraTarget = null;
+            CameraRig?.Clear();
+        }
 
         // Entities present in the current interpolation window
         private readonly HashSet<(long, uint)> _activeEntities = new HashSet<(long, uint)>();
@@ -99,6 +106,8 @@ namespace cameraTools.Replay
             _replay = replay;
             _ghostManager = new GhostManager();
             _media = new ReplayMediaPlayer(replay);
+            CameraRig = new ReplayCameraRig(_ghostManager, replay);
+            Music = new ReplayMusic();
             _playbackTime = 0f;
             _playbackSpeed = 1f;
             _paused = false;
@@ -128,6 +137,11 @@ namespace cameraTools.Replay
         {
             if (!IsPlaying)
                 return;
+
+            CameraRig?.Clear();
+            CameraRig = null;
+            Music?.Dispose();
+            Music = null;
 
             _worldStatePlayer?.RestoreAll();
             _media?.Dispose();
@@ -294,6 +308,8 @@ namespace cameraTools.Replay
                             renderer.enabled = false;
                         }
             }
+            CameraRig?.Update();
+            Music?.Update(_playbackTime, _playbackSpeed, _paused);
             if (_cameraTarget.HasValue && GameCamera.m_instance != null)
             {
                 (long user, uint id) = _cameraTarget.Value;

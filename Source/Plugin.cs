@@ -61,6 +61,7 @@ namespace cameraTools
 
         private void OnDestroy()
         {
+            CameraPanelStyle.Dispose();
             Config.Save();
         }
         

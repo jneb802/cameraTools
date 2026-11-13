@@ -119,7 +119,7 @@ namespace cameraTools.Replay
                 _nextScan = Time.unscaledTime + 0.25f;
                 foreach (AudioSource source in Object.FindObjectsByType<AudioSource>(FindObjectsSortMode.None))
                 {
-                    if (_sounds.ContainsValue(source)) continue;
+                    if (_sounds.ContainsValue(source) || source == ReplayPlayer.Instance.Music?.Source) continue;
                     if (!_muted.ContainsKey(source)) _muted[source] = source.mute;
                     source.mute = true;
                 }
