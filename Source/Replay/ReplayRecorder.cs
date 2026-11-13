@@ -4,6 +4,7 @@ using UnityEngine;
 
 namespace cameraTools.Replay
 {
+    [DefaultExecutionOrder(10000)]
     public class ReplayRecorder : MonoBehaviour
     {
         public static ReplayRecorder Instance { get; private set; } = null!;
@@ -30,6 +31,9 @@ namespace cameraTools.Replay
         private float _recordStartTime;
         private readonly List<TriggerEvent> _pendingTriggers = new List<TriggerEvent>();
         private WorldStateRecorder? _worldStateRecorder;
+        private float _nextSample;
+        private long _estimatedBytes;
+        private readonly Dictionary<Animator, List<(string Path, Transform Bone)>> _bones = new();
 
         private void Awake()
         {
@@ -58,6 +62,9 @@ namespace cameraTools.Replay
             };
             _pendingTriggers.Clear();
             _recordStartTime = Time.time;
+            _nextSample = 0f;
+            _bones.Clear();
+            _estimatedBytes = 0;
 
             _worldStateRecorder = new WorldStateRecorder();
             _worldStateRecorder.CaptureBaseline();
@@ -125,6 +132,15 @@ namespace cameraTools.Replay
             if (ZNetScene.instance == null)
                 return;
 
+            float elapsed = Time.time - _recordStartTime;
+            if (elapsed < _nextSample) return;
+            _nextSample = elapsed + 1f / 30f;
+            if (elapsed >= 600f || _estimatedBytes >= 256L * 1024 * 1024)
+            {
+                cameraToolsPlugin.TemplateLogger.LogWarning("Recording limit reached; saving take (10 minutes or approximately 256 MiB of sample data).");
+                StopRecording(); return;
+            }
+
             var frame = new ReplayFrame
             {
                 Time = Time.time - _recordStartTime
@@ -139,11 +155,15 @@ namespace cameraTools.Replay
                     continue;
 
                 var character = nview.GetComponent<Character>();
-                if (character == null)
+                Projectile projectile = nview.GetComponent<Projectile>();
+                if (character == null && projectile == null)
+                    continue;
+                if (Player.m_localPlayer != null && Vector3.Distance(nview.transform.position, Player.m_localPlayer.transform.position) > 150f)
                     continue;
 
                 var snapshot = new EntitySnapshot
                 {
+                    IsProjectile = projectile != null,
                     ZdoUserID = zdo.m_uid.UserID,
                     ZdoID = zdo.m_uid.ID,
                     PrefabHash = zdo.GetPrefab(),
@@ -164,6 +184,24 @@ namespace cameraTools.Replay
                     StateF = zdo.GetInt(ZdoSalt + Hash_StateF, 0),
                     StateI = zdo.GetInt(ZdoSalt + Hash_StateI, 0)
                 };
+
+                Animator animator = nview.GetComponentInChildren<Animator>();
+                if (animator != null)
+                {
+                    if (!_bones.TryGetValue(animator, out List<(string Path, Transform Bone)> bones))
+                    {
+                        bones = new List<(string, Transform)>();
+                        HashSet<Transform> included = new HashSet<Transform>();
+                        foreach (SkinnedMeshRenderer renderer in nview.GetComponentsInChildren<SkinnedMeshRenderer>())
+                            foreach (Transform bone in renderer.bones)
+                                for (Transform current = bone; current != null && current != nview.transform; current = current.parent)
+                                    if (included.Add(current)) bones.Add((PosePath(current, nview.transform), current));
+                        _bones[animator] = bones;
+                    }
+                    snapshot.Pose = new List<BonePose>(bones.Count);
+                    foreach ((string path, Transform bone) in bones)
+                        if (bone != null) snapshot.Pose.Add(new BonePose { Path = path, Position = bone.localPosition, Rotation = bone.localRotation, Scale = bone.localScale });
+                }
 
                 var visEquip = nview.GetComponent<VisEquipment>();
                 if (visEquip != null)
@@ -187,6 +225,7 @@ namespace cameraTools.Replay
                 }
 
                 frame.Entities.Add(snapshot);
+                _estimatedBytes += 256 + (snapshot.Pose?.Count ?? 0) * 80L;
             }
 
             _currentReplay.Frames.Add(frame);
@@ -203,6 +242,14 @@ namespace cameraTools.Replay
                 _pendingTriggers.Clear();
                 _worldStateRecorder = null;
             }
+        }
+
+        private static string PosePath(Transform bone, Transform root)
+        {
+            string path = bone.name;
+            for (Transform parent = bone.parent; parent != null && parent != root; parent = parent.parent)
+                path = parent.name + "/" + path;
+            return path;
         }
     }
 }

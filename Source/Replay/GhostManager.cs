@@ -16,6 +16,7 @@ namespace cameraTools.Replay
             public GameObject GameObject;
             public Animator? Animator;
             public VisEquipment? VisEquipment;
+            public readonly Dictionary<string, Transform> Bones = new();
 
             public GhostInstance(GameObject go, Animator? animator, VisEquipment? visEquipment)
             {
@@ -59,25 +60,25 @@ namespace cameraTools.Replay
             }
 
             // Spawn ghost without ZDO registration
+            bool previousDisable = ZNetView.m_forceDisableInit;
+            GameObject ghost;
+            GameObject staging = new GameObject("Replay staging");
+            staging.SetActive(false);
             ZNetView.m_forceDisableInit = true;
-            var ghost = Object.Instantiate(prefab, position, rotation);
-            ZNetView.m_forceDisableInit = false;
-
-            // Disable AI, sync, physics, drops
-            DisableComponent<BaseAI>(ghost);
-            DisableComponent<MonsterAI>(ghost);
-            DisableComponent<AnimalAI>(ghost);
-            DisableComponent<ZSyncTransform>(ghost);
-            DisableComponent<ZSyncAnimation>(ghost);
-            DisableComponent<CharacterDrop>(ghost);
-
-            // Make kinematic and disable colliders
-            var rb = ghost.GetComponent<Rigidbody>();
-            if (rb != null)
-                rb.isKinematic = true;
-
-            foreach (var collider in ghost.GetComponentsInChildren<Collider>())
-                collider.enabled = false;
+            try
+            {
+                ghost = Object.Instantiate(prefab, position, rotation, staging.transform);
+                RemoveGameplayScripts(ghost);
+                foreach (Collider collider in ghost.GetComponentsInChildren<Collider>(true)) collider.enabled = false;
+                foreach (Rigidbody body in ghost.GetComponentsInChildren<Rigidbody>(true)) body.isKinematic = true;
+                foreach (Animator animation in ghost.GetComponentsInChildren<Animator>(true)) animation.fireEvents = false;
+                ghost.transform.SetParent(null, true);
+            }
+            finally
+            {
+                ZNetView.m_forceDisableInit = previousDisable;
+                Object.Destroy(staging);
+            }
 
             var animator = ghost.GetComponentInChildren<Animator>();
             var visEquipment = ghost.GetComponent<VisEquipment>();
@@ -161,6 +162,27 @@ namespace cameraTools.Replay
 
             if (ghost.Animator != null)
                 ghost.Animator.SetTrigger(triggerName);
+        }
+
+        public void ApplyPose(EntitySnapshot a, EntitySnapshot b, float fraction)
+        {
+            if (a.Pose == null || a.Pose.Count == 0 || !_ghosts.TryGetValue(a.ZdoUserID, out Dictionary<uint, GhostInstance> entries)
+                || !entries.TryGetValue(a.ZdoID, out GhostInstance ghost)) return;
+            if (ghost.Animator != null) ghost.Animator.enabled = false;
+            for (int index = 0; index < a.Pose.Count; index++)
+            {
+                BonePose first = a.Pose[index];
+                BonePose second = b.Pose != null && index < b.Pose.Count && b.Pose[index].Path == first.Path ? b.Pose[index] : first;
+                if (!ghost.Bones.TryGetValue(first.Path, out Transform bone))
+                {
+                    bone = ghost.GameObject.transform.Find(first.Path);
+                    if (bone == null) continue;
+                    ghost.Bones[first.Path] = bone;
+                }
+                bone.localPosition = Vector3.Lerp(first.Position, second.Position, fraction);
+                bone.localRotation = Quaternion.Slerp(first.Rotation, second.Rotation, fraction);
+                bone.localScale = Vector3.Lerp(first.Scale, second.Scale, fraction);
+            }
         }
 
         public GameObject? GetOrCreateWorldGhost(long userID, uint objectID, int prefabHash, Vector3 position, Quaternion rotation)
@@ -266,6 +288,33 @@ namespace cameraTools.Replay
             var comp = go.GetComponent<T>();
             if (comp != null)
                 comp.enabled = false;
+        }
+
+        private static void RemoveGameplayScripts(GameObject ghost)
+        {
+            List<MonoBehaviour> remaining = new List<MonoBehaviour>(ghost.GetComponentsInChildren<MonoBehaviour>(true));
+            // VisEquipment needs the view during Awake. With forceDisableInit set,
+            // ZNetView destroys itself without creating or registering a ZDO.
+            remaining.RemoveAll(behavior => behavior is VisEquipment || behavior is ZNetView);
+            while (remaining.Count > 0)
+            {
+                int removable = remaining.FindIndex(candidate => !remaining.Exists(other => other != candidate && Requires(other, candidate)));
+                if (removable < 0) throw new System.InvalidOperationException("Replay prefab has cyclic component requirements");
+                MonoBehaviour component = remaining[removable];
+                remaining.RemoveAt(removable);
+                Object.DestroyImmediate(component);
+            }
+        }
+
+        private static bool Requires(MonoBehaviour dependent, MonoBehaviour dependency)
+        {
+            if (dependent.gameObject != dependency.gameObject) return false;
+            System.Type type = dependency.GetType();
+            foreach (RequireComponent requirement in dependent.GetType().GetCustomAttributes(typeof(RequireComponent), true))
+                if ((requirement.m_Type0 != null && requirement.m_Type0.IsAssignableFrom(type)) ||
+                    (requirement.m_Type1 != null && requirement.m_Type1.IsAssignableFrom(type)) ||
+                    (requirement.m_Type2 != null && requirement.m_Type2.IsAssignableFrom(type))) return true;
+            return false;
         }
     }
 }

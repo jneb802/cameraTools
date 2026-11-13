@@ -5,6 +5,8 @@ namespace cameraTools.Replay
 {
     public struct EntitySnapshot
     {
+        public bool IsProjectile;
+        public List<BonePose>? Pose;
         // Identity (12 bytes wire: long userID + uint id)
         public long ZdoUserID;
         public uint ZdoID;
@@ -64,6 +66,14 @@ namespace cameraTools.Replay
         }
     }
 
+    public struct BonePose
+    {
+        public string Path;
+        public Vector3 Position;
+        public Quaternion Rotation;
+        public Vector3 Scale;
+    }
+
     public struct TriggerEvent
     {
         public float Time;
@@ -101,7 +111,7 @@ namespace cameraTools.Replay
     public class ReplayFile
     {
         public const string Magic = "VRPL";
-        public const int Version = 4;
+        public const int Version = 5;
 
         public long Timestamp;
         public float Duration;

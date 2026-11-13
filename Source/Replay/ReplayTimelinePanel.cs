@@ -4,6 +4,7 @@ namespace cameraTools.Replay
 {
     public class ReplayTimelinePanel : MonoBehaviour
     {
+        public static bool Visible = true;
         private Rect _windowRect;
         private const int WindowId = 98235;
 
@@ -15,7 +16,7 @@ namespace cameraTools.Replay
 
         private void OnGUI()
         {
-            if (!ReplayPlayer.IsPlaying)
+            if (!ReplayPlayer.IsPlaying || !Visible)
                 return;
 
             _windowRect = GUI.Window(WindowId, _windowRect, DrawWindow, "Replay Timeline");
