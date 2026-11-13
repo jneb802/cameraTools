@@ -38,7 +38,9 @@ namespace cameraTools.Replay
         private ReplayFile? _currentReplay;
         private float _recordStartTime;
         private readonly List<TriggerEvent> _pendingTriggers = new List<TriggerEvent>();
-        private WorldStateRecorder? _worldStateRecorder;
+        private SceneRecorder? _scene;
+        private bool _thumbnailPending;
+        private readonly HashSet<(long, uint)> _actors = new();
         private ReplayMediaRecorder? _media;
         private float _nextSample;
         private long _estimatedBytes;
@@ -59,7 +61,7 @@ namespace cameraTools.Replay
                 return false;
             }
 
-            if (ReplayPlayer.IsPlaying)
+            if (ReplayPlayer.IsPlaying || ReplaySession.Active)
             {
                 cameraToolsPlugin.TemplateLogger.LogWarning("Cannot record while replaying!");
                 return false;
@@ -78,8 +80,10 @@ namespace cameraTools.Replay
             _estimatedBytes = 0;
             _stopReason = "";
 
-            _worldStateRecorder = new WorldStateRecorder();
-            _worldStateRecorder.CaptureBaseline();
+            _currentReplay.Info = CreateInfo(RecordingName);
+            _scene = new SceneRecorder(_currentReplay);
+            _thumbnailPending = true;
+            _actors.Clear();
 
             IsRecording = true;
             _media = new ReplayMediaRecorder(_currentReplay);
@@ -100,21 +104,18 @@ namespace cameraTools.Replay
             _media = null;
             _currentReplay.Duration = Time.time - _recordStartTime;
             _currentReplay.TriggerEvents.AddRange(_pendingTriggers);
-
-            if (_worldStateRecorder != null)
-            {
-                var worldEvents = _worldStateRecorder.GetEvents();
-                worldEvents.Sort((a, b) => a.Time.CompareTo(b.Time));
-                _currentReplay.WorldEvents.AddRange(worldEvents);
-            }
+            _scene?.Finish();
+            _currentReplay.Info.Duration = _currentReplay.Duration;
+            _currentReplay.Info.Actors = _actors.Count;
 
             var path = System.IO.Path.Combine(ReplayFileIO.GetReplayDirectory(), RecordingName + ".valreplay");
             ReplayFile completed = _currentReplay;
             _currentReplay = null;
             _pendingTriggers.Clear();
-            _worldStateRecorder = null;
+            _scene = null;
             _bones.Clear();
-            _saveSummary = $"Recording saved: {RecordingName}.valreplay ({completed.Frames.Count} frames, {completed.Duration:F1}s, {completed.Effects.Count} effects, {completed.Sounds.Count} sounds, {completed.Deaths.Count} deaths)";
+            _actors.Clear();
+            _saveSummary = $"Recording saved: {RecordingName}.valreplay ({completed.Frames.Count} frames, {completed.Duration:F1}s, {completed.Scene.Count} world objects, {completed.Terrain.Count} zones, {completed.Effects.Count} effects, {completed.Sounds.Count} sounds, {completed.Deaths.Count} deaths)";
             // Samples contain copied structs and strings, not live Unity objects.
             _saveTask = Task.Run(() => ReplayFileIO.Write(path, completed));
         }
@@ -175,6 +176,15 @@ namespace cameraTools.Replay
             {
                 Time = Time.time - _recordStartTime
             };
+            if (GameCamera.m_instance != null)
+            {
+                frame.CameraPosition = GameCamera.m_instance.transform.position;
+                frame.CameraRotation = GameCamera.m_instance.transform.rotation;
+                if (_currentReplay.Frames.Count == 0)
+                    _currentReplay.Info.StartCamera = new[] { frame.CameraPosition.x, frame.CameraPosition.y, frame.CameraPosition.z,
+                        frame.CameraRotation.x, frame.CameraRotation.y, frame.CameraRotation.z, frame.CameraRotation.w };
+            }
+            if (_thumbnailPending) { _thumbnailPending = false; _currentReplay.Thumbnail = CaptureThumbnail(); }
             _media?.BeginSample();
 
             foreach (var kvp in ZNetScene.instance.m_instances)
@@ -259,6 +269,8 @@ namespace cameraTools.Replay
                 }
 
                 snapshot.Visual = ReplayVisuals.Capture(nview.gameObject, ragdoll != null, ref _estimatedBytes);
+                if (_actors.Add((snapshot.ZdoUserID, snapshot.ZdoID)))
+                    _currentReplay.Info.Prefabs[snapshot.PrefabHash] = Utils.GetPrefabName(nview.gameObject);
                 frame.Entities.Add(snapshot);
                 _media?.Sounds(nview.gameObject, elapsed, ref _estimatedBytes);
                 _estimatedBytes += 256 + (snapshot.Pose?.Count ?? 0) * 80L;
@@ -267,7 +279,7 @@ namespace cameraTools.Replay
             _currentReplay.Frames.Add(frame);
             _media?.Sample(elapsed, ref _estimatedBytes);
 
-            _worldStateRecorder?.ScanFrame(frame.Time);
+            _scene?.Update(frame.Time, ref _estimatedBytes);
         }
 
         private void OnDestroy()
@@ -278,6 +290,47 @@ namespace cameraTools.Replay
                 try { _saveTask.Wait(); }
                 catch (AggregateException) { /* Report the task failure below. */ }
                 CompleteSave(false);
+            }
+        }
+
+        private static ReplayInfo CreateInfo(string name)
+        {
+            ReplayInfo info = new() { Name = name, CreatedUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds(), GameVersion = global::Version.GetVersionString() };
+            World? world = ZNet.m_world;
+            if (world != null)
+            {
+                info.WorldName = world.m_name; info.SeedName = world.m_seedName;
+                info.Seed = world.m_seed; info.WorldGenVersion = world.m_worldGenVersion;
+            }
+            foreach (BepInEx.PluginInfo plugin in BepInEx.Bootstrap.Chainloader.PluginInfos.Values)
+                info.Mods.Add(new ReplayMod { Guid = plugin.Metadata.GUID, Name = plugin.Metadata.Name, Version = plugin.Metadata.Version.ToString() });
+            return info;
+        }
+
+        // A small preview for the replay browser, rendered from the game camera before the HUD is drawn.
+        private static byte[] CaptureThumbnail()
+        {
+            Camera? camera = Utils.GetMainCamera();
+            if (camera == null) return Array.Empty<byte>();
+            RenderTexture target = RenderTexture.GetTemporary(384, 216, 24);
+            RenderTexture? previousTarget = camera.targetTexture;
+            RenderTexture? previousActive = RenderTexture.active;
+            Texture2D image = new Texture2D(384, 216, TextureFormat.RGB24, false);
+            try
+            {
+                camera.targetTexture = target;
+                camera.Render();
+                RenderTexture.active = target;
+                image.ReadPixels(new Rect(0, 0, 384, 216), 0, 0);
+                image.Apply();
+                return image.EncodeToJPG(80);
+            }
+            finally
+            {
+                camera.targetTexture = previousTarget;
+                RenderTexture.active = previousActive;
+                RenderTexture.ReleaseTemporary(target);
+                Destroy(image);
             }
         }
 

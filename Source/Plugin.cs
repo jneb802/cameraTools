@@ -50,6 +50,7 @@ namespace cameraTools
             gameObject.AddComponent<ReplayRecorder>();
             gameObject.AddComponent<ReplayPlayer>();
             gameObject.AddComponent<ReplayTimelinePanel>();
+            gameObject.AddComponent<ReplayBrowser>();
             gameObject.AddComponent<MarkerMode>();
             gameObject.AddComponent<MarkerRenderer>();
             gameObject.AddComponent<AreaRulerManager>();

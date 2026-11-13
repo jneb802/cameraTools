@@ -35,8 +35,7 @@ namespace cameraTools.Replay
                     _ids.Add(key);
                     _starts.Add(frame.Time);
                     string kind = entity.IsProjectile ? "Projectile" : entity.Kind == 2 ? "Ragdoll" : entity.Kind == 3 ? "Drop" : "Actor";
-                    GameObject prefab = ZNetScene.instance.GetPrefab(entity.PrefabHash);
-                    Labels.Add($"{kind}: {prefab?.name ?? entity.PrefabHash.ToString()} [{entity.ZdoID}] at {frame.Time:F1}s");
+                    Labels.Add($"{kind}: {replay.Info.PrefabName(entity.PrefabHash)} [{entity.ZdoID}] at {frame.Time:F1}s");
                 }
         }
 

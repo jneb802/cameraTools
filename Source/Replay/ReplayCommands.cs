@@ -10,7 +10,7 @@ namespace cameraTools.Replay
     {
         public static void Register()
         {
-            new Terminal.ConsoleCommand("ct_replay", "ct_replay status|media|targets|pause|play|seek <seconds>|speed <0.1-4>|detach|follow <user:id> <x> <y> <z> [local]|view <user:id> <aim|attach|front|third|projectile>|music [index]", args =>
+            new Terminal.ConsoleCommand("ct_replay", "ct_replay status|media|targets|pause|play|seek <seconds>|speed <0.1-4>|detach|recorded|follow <user:id> <x> <y> <z> [local]|view <user:id> <aim|attach|front|third|projectile>|music [index]|exit", args =>
             {
                 try
                 {
@@ -19,7 +19,11 @@ namespace cameraTools.Replay
                     string action = args.Length > 1 ? args[1].ToLowerInvariant() : "status";
                     switch (action)
                     {
-                        case "status": args.Context.AddString($"time={player.PlaybackTime:F3} duration={player.Duration:F3} paused={player.IsPaused} speed={player.PlaybackSpeed:F2} camera={player.CameraRig?.Status} music={player.Music?.Selected}"); break;
+                        case "status": args.Context.AddString($"time={player.PlaybackTime:F3} duration={player.Duration:F3} paused={player.IsPaused} speed={player.PlaybackSpeed:F2} session={player.Isolated} recordedCamera={player.FollowingRecordedCamera} camera={player.CameraRig?.Status} music={player.Music?.Selected} scene={player.SceneSummary}"); break;
+                        case "recorded": player.FollowRecordedCamera(); break;
+                        case "exit":
+                            if (player.Isolated) ReplaySession.Exit(); else player.StopPlayback();
+                            break;
                         case "view":
                             string[] targetId = args[2].Split(':');
                             player.CameraRig!.Select(long.Parse(targetId[0]), uint.Parse(targetId[1]));
@@ -63,7 +67,7 @@ namespace cameraTools.Replay
 
             new Terminal.ConsoleCommand(
                 "replay",
-                "Replay: replay <file> | replay list | replay exit",
+                "Replay: replay <file> (from the main menu: opens it on its own; in a world: plays it over the world) | replay list | replay exit",
                 RunReplay,
                 optionsFetcher: GetReplayOptions
             );
@@ -130,7 +134,8 @@ namespace cameraTools.Replay
                         args.Context.AddString("No replay is currently playing.");
                         return;
                     }
-                    ReplayPlayer.Instance.StopPlayback();
+                    if (ReplayPlayer.Instance.Isolated) ReplaySession.Exit();
+                    else ReplayPlayer.Instance.StopPlayback();
                     args.Context.AddString("Replay stopped.");
                     break;
 
@@ -155,7 +160,10 @@ namespace cameraTools.Replay
             {
                 var name = Path.GetFileNameWithoutExtension(file);
                 var info = new FileInfo(file);
-                terminal.AddString($"  {name} ({info.Length / 1024}KB)");
+                string standalone;
+                try { standalone = ReplayFileIO.ReadInfo(file).Info.CanLoadAlone ? "opens on its own" : "needs its world"; }
+                catch (System.Exception error) { standalone = "unreadable: " + error.Message; }
+                terminal.AddString($"  {name} ({info.Length / 1024}KB, {standalone})");
             }
         }
 
@@ -177,6 +185,12 @@ namespace cameraTools.Replay
 
             try
             {
+                if (FejdStartup.instance != null)
+                {
+                    string error = ReplayBrowser.OpenSession(path);
+                    terminal.AddString(error.Length > 0 ? "Failed to open replay: " + error : $"Opening replay session: {name}");
+                    return;
+                }
                 var replay = ReplayFileIO.Read(path);
                 ReplayPlayer.Instance.StartPlayback(replay);
                 terminal.AddString($"Playing replay: {name} ({replay.Duration:F1}s)");

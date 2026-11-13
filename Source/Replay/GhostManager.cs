@@ -10,6 +10,12 @@ namespace cameraTools.Replay
             new Dictionary<long, Dictionary<uint, GhostInstance>>();
 
         private readonly HashSet<(long, uint)> _worldGhostKeys = new HashSet<(long, uint)>();
+        private readonly HashSet<int> _missing = new();
+        private readonly ReplayInfo _info;
+        /// <summary>Names of recorded characters and objects whose prefab is not loaded.</summary>
+        public readonly SortedSet<string> MissingNames = new();
+
+        public GhostManager(ReplayInfo info) { _info = info; }
 
         private class GhostInstance
         {
@@ -57,7 +63,13 @@ namespace cameraTools.Replay
             var prefab = ZNetScene.instance?.GetPrefab(prefabHash);
             if (prefab == null)
             {
-                cameraToolsPlugin.TemplateLogger.LogWarning($"Prefab not found for hash {prefabHash}");
+                // Usually a creature or item from a mod that is not loaded; it is left out of the replay.
+                if (_missing.Add(prefabHash))
+                {
+                    string name = _info.PrefabName(prefabHash);
+                    MissingNames.Add(name);
+                    cameraToolsPlugin.TemplateLogger.LogWarning($"Prefab not loaded, left out of the replay: {name}");
+                }
                 return null;
             }
 

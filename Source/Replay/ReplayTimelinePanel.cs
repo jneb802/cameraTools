@@ -40,7 +40,12 @@ namespace cameraTools.Replay
             GUILayout.Label($"{player.PlaybackSpeed:F2}×", GUILayout.Width(75));
             if (GUILayout.Button("+", GUILayout.Width(40))) player.AdjustSpeed(0.25f);
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("Exit replay", GUILayout.Width(130))) { player.StopPlayback(); GUILayout.EndHorizontal(); return; }
+            if (GUILayout.Button(player.Isolated ? "Back to menu" : "Exit replay", GUILayout.Width(150)))
+            {
+                if (player.Isolated) ReplaySession.Exit(); else player.StopPlayback();
+                GUILayout.EndHorizontal();
+                return;
+            }
             GUILayout.EndHorizontal();
             ReplayCameraRig? rig = player.CameraRig;
             if (rig != null)
@@ -57,6 +62,11 @@ namespace cameraTools.Replay
                 ViewButton(rig, "Third person", "third");
                 ViewButton(rig, "Front", "front");
                 ViewButton(rig, "Projectile", "projectile");
+                if (player.HasRecordedCamera && GUILayout.Button(player.FollowingRecordedCamera ? "Recorded camera ✓" : "Recorded camera"))
+                {
+                    if (player.FollowingRecordedCamera) player.Detach(); else player.FollowRecordedCamera();
+                    _message = "";
+                }
                 GUILayout.EndHorizontal();
                 GUILayout.Label(rig.Status);
             }
@@ -72,6 +82,7 @@ namespace cameraTools.Replay
                 if (music.Selected > 0 && MusicMan.m_masterMusicVolume <= 0)
                     GUILayout.Label("Game music is muted. Raise Master and Music volume in Settings.");
             }
+            if (player.SceneSummary.Length > 0) GUILayout.Label(player.SceneSummary);
             GUILayout.Label("Left-click: aim lock • Secondary attack: attach\nCtrl+F1: cursor • Drag title: move panel");
             if (_message.Length > 0) GUILayout.Label(_message);
             GUI.DragWindow(new Rect(0, 0, _windowRect.width, 40));
