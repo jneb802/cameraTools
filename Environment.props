@@ -38,6 +38,10 @@
 
     <!-- Unity Engine -->
     <ItemGroup>
+        <Reference Include="UnityEngine.AudioModule">
+            <HintPath>$(VALHEIM_MANAGED)/UnityEngine.AudioModule.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
         <Reference Include="UnityEngine">
             <HintPath>$(VALHEIM_MANAGED)/UnityEngine.dll</HintPath>
             <Private>false</Private>

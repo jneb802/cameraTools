@@ -10,7 +10,7 @@ namespace cameraTools.Replay
     {
         public static void Register()
         {
-            new Terminal.ConsoleCommand("ct_replay", "ct_replay status|targets|pause|play|seek <seconds>|speed <0.1-4>|detach|follow <user:id> <x> <y> <z> [local]", args =>
+            new Terminal.ConsoleCommand("ct_replay", "ct_replay status|media|targets|pause|play|seek <seconds>|speed <0.1-4>|detach|follow <user:id> <x> <y> <z> [local]", args =>
             {
                 try
                 {
@@ -21,6 +21,9 @@ namespace cameraTools.Replay
                     {
                         case "status": args.Context.AddString($"time={player.PlaybackTime:F3} duration={player.Duration:F3} paused={player.IsPaused} speed={player.PlaybackSpeed:F2}"); break;
                         case "targets": args.Context.AddString(player.Targets()); break;
+                        case "media":
+                            foreach (string line in player.Media().Split('\n')) args.Context.AddString(line);
+                            break;
                         case "pause": player.SetPaused(true); break;
                         case "play": player.SetPaused(false); break;
                         case "detach": player.Detach(); break;
@@ -39,7 +42,7 @@ namespace cameraTools.Replay
             });
             new Terminal.ConsoleCommand(
                 "record",
-                "Recording: record [name] | record stop",
+                "Recording: record [name] | record stop | record status",
                 RunRecord,
                 optionsFetcher: GetRecordOptions
             );
@@ -61,16 +64,18 @@ namespace cameraTools.Replay
 
         private static void RunRecord(Terminal.ConsoleEventArgs args)
         {
+            if (args.Length >= 2 && args[1].ToLowerInvariant() == "status")
+            { args.Context.AddString(ReplayRecorder.Instance.Status); return; }
             // "record stop" — explicitly stop
             if (args.Length >= 2 && args[1].ToLower() == "stop")
             {
                 if (!ReplayRecorder.IsRecording)
                 {
-                    args.Context.AddString("Not currently recording.");
+                    args.Context.AddString(ReplayRecorder.Instance.Status);
                     return;
                 }
                 ReplayRecorder.Instance.StopRecording();
-                args.Context.AddString($"Recording saved: {ReplayRecorder.Instance.RecordingName}.valreplay");
+                args.Context.AddString(ReplayRecorder.Instance.Status);
                 return;
             }
 
@@ -78,14 +83,15 @@ namespace cameraTools.Replay
             if (ReplayRecorder.IsRecording)
             {
                 ReplayRecorder.Instance.StopRecording();
-                args.Context.AddString($"Recording saved: {ReplayRecorder.Instance.RecordingName}.valreplay");
+                args.Context.AddString(ReplayRecorder.Instance.Status);
                 return;
             }
 
             // Start recording with optional custom name
             string? name = args.Length >= 2 ? args[1] : null;
-            ReplayRecorder.Instance.StartRecording(name);
-            args.Context.AddString($"Recording started: {ReplayRecorder.Instance.RecordingName}");
+            if (ReplayRecorder.Instance.StartRecording(name))
+                args.Context.AddString($"Recording started: {ReplayRecorder.Instance.RecordingName}");
+            else args.Context.AddString("Cannot start recording while a replay or save is active. " + ReplayRecorder.Instance.Status);
         }
 
         private static void RunReplay(Terminal.ConsoleEventArgs args)
@@ -141,6 +147,8 @@ namespace cameraTools.Replay
 
         private static void PlayReplay(Terminal terminal, string name)
         {
+            if (ReplayRecorder.Instance.IsSaving)
+            { terminal.AddString(ReplayRecorder.Instance.Status); return; }
             var path = Path.Combine(ReplayFileIO.GetReplayDirectory(), name + ".valreplay");
             if (!File.Exists(path))
             {
@@ -167,7 +175,7 @@ namespace cameraTools.Replay
 
         private static List<string> GetRecordOptions()
         {
-            return new List<string> { "stop" };
+            return new List<string> { "stop", "status" };
         }
 
         private static List<string> GetReplayOptions()

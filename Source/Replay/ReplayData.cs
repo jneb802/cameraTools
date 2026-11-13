@@ -7,6 +7,8 @@ namespace cameraTools.Replay
     {
         public bool IsProjectile;
         public List<BonePose>? Pose;
+        public byte Kind; // 0 character, 1 projectile, 2 ragdoll, 3 dropped item
+        public VisualState? Visual;
         // Identity (12 bytes wire: long userID + uint id)
         public long ZdoUserID;
         public uint ZdoID;
@@ -111,12 +113,15 @@ namespace cameraTools.Replay
     public class ReplayFile
     {
         public const string Magic = "VRPL";
-        public const int Version = 5;
+        public const int Version = 6;
 
         public long Timestamp;
         public float Duration;
         public List<ReplayFrame> Frames = new List<ReplayFrame>();
         public List<TriggerEvent> TriggerEvents = new List<TriggerEvent>();
         public List<WorldEvent> WorldEvents = new List<WorldEvent>();
+        public List<EffectTrack> Effects = new();
+        public List<SoundTrack> Sounds = new();
+        public List<DeathEvent> Deaths = new();
     }
 }
