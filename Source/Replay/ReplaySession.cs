@@ -25,6 +25,7 @@ namespace cameraTools.Replay
         private static FileHelpers.FileSource _previousProfileSource;
         private static SaveSystemSessionFlags _previousFlags;
         private static bool _previousTutorials;
+        private static bool _previousAutoPickup;
         private static Dictionary<Vector2s, TerrainPatch> _terrain = new();
         private static World? _world;
 
@@ -46,8 +47,11 @@ namespace cameraTools.Replay
             _previousProfileSource = Game.m_profileFileSource;
             _previousFlags = SaveSystem.s_sessionFlags;
             _previousTutorials = Raven.m_tutorialsEnabled;
+            _previousAutoPickup = Player.m_enableAutoPickup;
             SaveSystem.SetSessionFlags(NoSaves);
             Raven.m_tutorialsEnabled = false;
+            // The hidden player follows the camera and must not pick up the replayed items.
+            Player.m_enableAutoPickup = false;
             // No file has this name, so the game uses a blank character that is never saved.
             Game.SetProfile(ProfileName, FileHelpers.FileSource.Local);
             Active = true;
@@ -80,6 +84,7 @@ namespace cameraTools.Replay
             _terrain = new Dictionary<Vector2s, TerrainPatch>();
             SaveSystem.s_sessionFlags = _previousFlags;
             Raven.m_tutorialsEnabled = _previousTutorials;
+            Player.m_enableAutoPickup = _previousAutoPickup;
             Game.SetProfile(_previousProfile, _previousProfileSource);
             RemoveEmptySaveFolder();
             cameraToolsPlugin.TemplateLogger.LogInfo("[ReplaySession] Closed");

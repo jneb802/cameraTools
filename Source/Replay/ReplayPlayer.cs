@@ -138,7 +138,7 @@ namespace cameraTools.Replay
             _replay = replay;
             _ghostManager = new GhostManager(replay.Info);
             _media = new ReplayMediaPlayer(replay);
-            CameraRig = new ReplayCameraRig(_ghostManager, replay);
+            CameraRig = new ReplayCameraRig(replay);
             Music = new ReplayMusic();
             _playbackTime = 0f;
             _playbackSpeed = 1f;
@@ -279,6 +279,14 @@ namespace cameraTools.Replay
             foreach (var a in frameA.Entities)
             {
                 var key = (a.ZdoUserID, a.ZdoID);
+                if (_scene != null && _scene.Contains(a.ZdoUserID, a.ZdoID))
+                {
+                    // Replayed as a real object (a dropped item in the session); only its pose comes from the frames.
+                    if (frameBEntities.TryGetValue(key, out EntitySnapshot next))
+                        _scene.Move(a.ZdoUserID, a.ZdoID, Vector3.Lerp(a.Position, next.Position, t), Quaternion.Slerp(a.Rotation, next.Rotation, t));
+                    else _scene.Move(a.ZdoUserID, a.ZdoID, a.Position, a.Rotation);
+                    continue;
+                }
                 currentEntities.Add(key);
 
                 _ghostManager.GetOrCreateGhost(a.ZdoUserID, a.ZdoID, a.PrefabHash, a.Position, a.Rotation);
@@ -319,7 +327,7 @@ namespace cameraTools.Replay
             {
                 if (_playbackTime < frameB.Time) continue;
                 var key = (b.ZdoUserID, b.ZdoID);
-                if (currentEntities.Contains(key))
+                if (currentEntities.Contains(key) || (_scene != null && _scene.Contains(b.ZdoUserID, b.ZdoID)))
                     continue;
 
                 currentEntities.Add(key);
@@ -369,7 +377,7 @@ namespace cameraTools.Replay
             if (_cameraTarget.HasValue && GameCamera.m_instance != null)
             {
                 (long user, uint id) = _cameraTarget.Value;
-                GameObject? target = _ghostManager.GetWorldGhostObject(user, id);
+                GameObject? target = FindTarget(user, id);
                 if (target != null)
                 {
                     Transform camera = GameCamera.m_instance.transform;
@@ -381,6 +389,14 @@ namespace cameraTools.Replay
                 }
             }
             if (Isolated) ReplaySession.FollowCamera();
+        }
+
+        /// <summary>The object showing a recorded entity: its copy, or the real object the session rebuilt.</summary>
+        internal GameObject? FindTarget(long user, uint id)
+        {
+            GameObject? ghost = _ghostManager?.GetWorldGhostObject(user, id);
+            if (ghost != null || _scene == null || !_scene.Contains(user, id) || ZNetScene.instance == null) return ghost;
+            return ZNetScene.instance.FindInstance(new ZDOID(user, id));
         }
 
         private void Hide(GameObject root)

@@ -8,7 +8,6 @@ namespace cameraTools.Replay
     // Keep identity rather than a clone reference: seeking can destroy and recreate clones.
     public sealed class ReplayCameraRig
     {
-        private readonly GhostManager _ghosts;
         private readonly List<(long, uint)> _ids = new();
         private readonly List<float> _starts = new();
         public readonly List<string> Labels = new();
@@ -23,9 +22,8 @@ namespace cameraTools.Replay
             _attachment.HasValue ? "Attached: camera moves and turns with target" :
             _aim.HasValue ? "Aim locked: camera position is free" : "Free camera";
 
-        public ReplayCameraRig(GhostManager ghosts, ReplayFile replay)
+        public ReplayCameraRig(ReplayFile replay)
         {
-            _ghosts = ghosts;
             HashSet<(long, uint)> seen = new();
             foreach (ReplayFrame frame in replay.Frames)
                 foreach (EntitySnapshot entity in frame.Entities)
@@ -39,7 +37,7 @@ namespace cameraTools.Replay
                 }
         }
 
-        private GameObject? Get((long, uint) id) => _ghosts.GetWorldGhostObject(id.Item1, id.Item2);
+        private GameObject? Get((long, uint) id) => ReplayPlayer.Instance.FindTarget(id.Item1, id.Item2);
 
         public void SeekToSelected()
         {

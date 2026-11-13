@@ -90,6 +90,8 @@ Open **Replays** on the main menu, pick a recording and press **Watch**. The gam
 The replay session is a temporary world that nothing can change or save:
 
 - The recorded objects belong to a player who is never connected, so they show exactly as a client shows another player's objects. Nothing decays, grows, uses fuel, smelts or spawns.
+- Dropped items are rebuilt as real items from their recorded data and moved along their recorded path, so mods that decorate items show them too, for example EpicLoot's loot beams. The hidden player does not pick them up.
+- The game's wind, ocean and weather loops play for wherever the camera is; everything else you hear is the recorded sound.
 - Every zone counts as generated, so the world adds no vegetation, locations or creatures of its own; the recorded terrain replaces the generated terrain.
 - Character and world saves are switched off, and nothing is written to your characters or worlds.
 
