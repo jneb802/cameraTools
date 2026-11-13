@@ -69,6 +69,8 @@ namespace cameraTools.Replay
                 GUILayout.Label($"Music volume {music.Volume:P0}", GUILayout.Width(180));
                 music.Volume = GUILayout.HorizontalSlider(music.Volume, 0, 1);
                 GUILayout.EndHorizontal();
+                if (music.Selected > 0 && MusicMan.m_masterMusicVolume <= 0)
+                    GUILayout.Label("Game music is muted. Raise Master and Music volume in Settings.");
             }
             GUILayout.Label("Left-click: aim lock • Secondary attack: attach\nCtrl+F1: cursor • Drag title: move panel");
             if (_message.Length > 0) GUILayout.Label(_message);

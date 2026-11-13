@@ -146,7 +146,7 @@ namespace cameraTools.Replay
         {
             GameCamera camera = GameCamera.m_instance;
             if (camera == null || !GameCamera.InFreeFly()) return;
-            bool blocked = Console.IsVisible() || CameraPanelStyle.PointerBlocked;
+            bool blocked = Console.IsVisible() || Cursor.lockState != CursorLockMode.Locked || CameraPanelStyle.PointerBlocked;
             if (!blocked)
             {
                 bool aim = ZInput.GetButtonDown("Attack") || (ZInput.GetButtonDown("JoyRStick") && !ZInput.GetButton("JoyAltKeys"));
@@ -196,7 +196,8 @@ namespace cameraTools.Replay
     internal static class ReplayFreeFlyPatch
     {
         // Run vanilla movement after replay transforms are updated, not one frame earlier.
-        private static bool Prefix() => ReplayPlayer.IsPlaying ? ReplayCameraRig.Updating : !CameraPanelStyle.PointerBlocked;
+        private static bool Prefix() => ReplayPlayer.IsPlaying ? ReplayCameraRig.Updating :
+            !(CameraPanelStyle.CameraVisible && Cursor.lockState != CursorLockMode.Locked) && !CameraPanelStyle.PointerBlocked;
 
         private static bool ButtonDown(string name)
         {
