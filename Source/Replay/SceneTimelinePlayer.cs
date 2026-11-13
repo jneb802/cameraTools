@@ -16,6 +16,7 @@ namespace cameraTools.Replay
         private const float FrequentChangeSeconds = 1f;
 
         private readonly List<SceneObject> _objects = new();
+        private readonly HashSet<(long, uint)> _ids = new();
         private readonly int[] _applied;
         private readonly List<(float Time, int Index)> _events = new();
         private readonly ZPackage _package = new();
@@ -37,6 +38,7 @@ namespace cameraTools.Replay
                 }
                 int index = _objects.Count;
                 _objects.Add(item);
+                _ids.Add((item.User, item.Id));
                 if (item.Created > 0f) _events.Add((item.Created, index));
                 foreach (SceneState state in item.States)
                     if (state.Time > item.Created) _events.Add((state.Time, index));
@@ -53,6 +55,20 @@ namespace cameraTools.Replay
         }
 
         internal int ObjectCount => _objects.Count;
+
+        /// <summary>True when the object is replayed as a real game object rather than as a copy.</summary>
+        internal bool Contains(long user, uint id) => _ids.Contains((user, id));
+
+        /// <summary>Moves a replayed object to a recorded per-frame pose. The game moves objects owned by
+        /// another peer toward their data position and rotation every frame, so this keeps them smooth.</summary>
+        internal void Move(long user, uint id, Vector3 position, Quaternion rotation)
+        {
+            ZDO? zdo = ZDOMan.instance.GetZDO(new ZDOID(user, id));
+            if (zdo == null) return;
+            zdo.InternalSetPosition(position);
+            // Set the field directly: SetRotation raises the data revision, which makes objects reload their data.
+            zdo.m_rotation = rotation.eulerAngles;
+        }
 
         internal void Update(float time)
         {

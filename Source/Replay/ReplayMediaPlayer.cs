@@ -117,9 +117,12 @@ namespace cameraTools.Replay
             if (Time.unscaledTime >= _nextScan)
             {
                 _nextScan = Time.unscaledTime + 0.25f;
+                AudioMan? ambience = AudioMan.instance;
                 foreach (AudioSource source in Object.FindObjectsByType<AudioSource>(FindObjectsSortMode.None))
                 {
                     if (_sounds.ContainsValue(source) || source == ReplayPlayer.Instance.Music?.Source) continue;
+                    // The wind, ocean and ambient loops are not recorded; the game plays them for the camera's position.
+                    if (ambience != null && (source == ambience.m_windLoopSource || source == ambience.m_oceanAmbientSource || source == ambience.m_ambientLoopSource)) continue;
                     if (!_muted.ContainsKey(source)) _muted[source] = source.mute;
                     source.mute = true;
                 }
