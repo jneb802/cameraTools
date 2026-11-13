@@ -10,7 +10,7 @@ namespace cameraTools.Replay
     {
         public static void Register()
         {
-            new Terminal.ConsoleCommand("ct_replay", "ct_replay status|media|targets|pause|play|seek <seconds>|speed <0.1-4>|detach|follow <user:id> <x> <y> <z> [local]", args =>
+            new Terminal.ConsoleCommand("ct_replay", "ct_replay status|media|targets|pause|play|seek <seconds>|speed <0.1-4>|detach|follow <user:id> <x> <y> <z> [local]|view <user:id> <aim|attach|front|third|projectile>|music [index]", args =>
             {
                 try
                 {
@@ -19,7 +19,21 @@ namespace cameraTools.Replay
                     string action = args.Length > 1 ? args[1].ToLowerInvariant() : "status";
                     switch (action)
                     {
-                        case "status": args.Context.AddString($"time={player.PlaybackTime:F3} duration={player.Duration:F3} paused={player.IsPaused} speed={player.PlaybackSpeed:F2}"); break;
+                        case "status": args.Context.AddString($"time={player.PlaybackTime:F3} duration={player.Duration:F3} paused={player.IsPaused} speed={player.PlaybackSpeed:F2} camera={player.CameraRig?.Status} music={player.Music?.Selected}"); break;
+                        case "view":
+                            string[] targetId = args[2].Split(':');
+                            player.CameraRig!.Select(long.Parse(targetId[0]), uint.Parse(targetId[1]));
+                            player.CameraRig.SetView(args[3]);
+                            break;
+                        case "find":
+                            string[] findId = args[2].Split(':');
+                            player.CameraRig!.Select(long.Parse(findId[0]), uint.Parse(findId[1]));
+                            player.CameraRig.SeekToSelected();
+                            break;
+                        case "music":
+                            if (args.Length < 3) args.Context.AddString(string.Join("; ", player.Music!.Labels.Select((label, index) => $"{index}: {label}")));
+                            else player.Music!.Select(int.Parse(args[2]));
+                            break;
                         case "targets": args.Context.AddString(player.Targets()); break;
                         case "media":
                             foreach (string line in player.Media().Split('\n')) args.Context.AddString(line);

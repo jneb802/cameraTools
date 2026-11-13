@@ -15,8 +15,8 @@ namespace cameraTools
 
         private void Start()
         {
-            float y = (Screen.height - 360f) / 2f;
-            _windowRect = new Rect(20f, y, 360f, 360f);
+            float y = (Screen.height - 620f) / 2f;
+            _windowRect = new Rect(20f, y, 480f, 620f);
 
             _lineTexture = new Texture2D(1, 1);
             _lineTexture.SetPixel(0, 0, new Color(1f, 0f, 0f, 0.8f));
@@ -28,6 +28,7 @@ namespace cameraTools
             if (cameraToolsPlugin.PanelToggleKey.Value.IsDown())
             {
                 _showPanel = !_showPanel;
+                CameraPanelStyle.CameraVisible = _showPanel;
                 cameraToolsPlugin.TemplateLogger.LogDebug(_showPanel ? "Camera Tools panel opened" : "Camera Tools panel closed");
             }
         }
@@ -46,11 +47,15 @@ namespace cameraTools
             if (!_showPanel || GameCamera.m_instance == null)
                 return;
 
-            _windowRect = GUI.Window(WindowId, _windowRect, DrawWindow, "Camera Tools");
-
-            // Clamp to screen bounds
-            _windowRect.x = Mathf.Clamp(_windowRect.x, 0f, Screen.width - _windowRect.width);
-            _windowRect.y = Mathf.Clamp(_windowRect.y, 0f, Screen.height - _windowRect.height);
+            GUISkin previous = GUI.skin;
+            GUI.skin = CameraPanelStyle.Skin;
+            try
+            {
+                _windowRect = GUILayout.Window(WindowId, _windowRect, DrawWindow, "Camera Tools", GUILayout.Width(480));
+                _windowRect = CameraPanelStyle.Clamp(_windowRect);
+                CameraPanelStyle.CameraRect = _windowRect;
+            }
+            finally { GUI.skin = previous; }
         }
 
         private void DrawWindow(int id)
@@ -171,11 +176,13 @@ namespace cameraTools
                 GUILayout.Label(_lastAction);
             }
 
-            GUI.DragWindow();
+            GUILayout.Label("Ctrl+F1: release/capture cursor. Drag the title to move this panel.");
+            GUI.DragWindow(new Rect(0, 0, _windowRect.width, 40));
         }
 
         private void OnDestroy()
         {
+            CameraPanelStyle.CameraVisible = false;
             if (_lineTexture != null)
                 Destroy(_lineTexture);
         }
