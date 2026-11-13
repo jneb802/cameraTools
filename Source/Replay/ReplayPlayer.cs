@@ -17,6 +17,28 @@ namespace cameraTools.Replay
         private bool _paused;
         private int _lastTriggerIndex;
         private WorldStatePlayer? _worldStatePlayer;
+        private SceneTimelinePlayer? _scene;
+        private EnvironmentPlayer? _environment;
+        private bool _recordedCamera;
+        /// <summary>True when the replay runs in its own session instead of over a loaded world.</summary>
+        public bool Isolated { get; private set; }
+        public bool HasRecordedCamera => _replay != null && _replay.Info.StartCamera[6] != 0f;
+        public bool FollowingRecordedCamera => _recordedCamera;
+        public string SceneSummary
+        {
+            get
+            {
+                string actors = _ghostManager != null && _ghostManager.MissingNames.Count > 0
+                    ? $"Left out, mod not loaded: {string.Join(", ", _ghostManager.MissingNames)}" : "";
+                if (_scene == null) return actors.Length > 0 ? actors : Isolated ? "" : "Playing over the loaded world";
+                int skipped = 0;
+                foreach (int count in _scene.Missing.Values) skipped += count;
+                string summary = $"{_scene.ObjectCount} world objects";
+                if (skipped > 0) summary += $"; {skipped} objects from unloaded mods left out ({string.Join(", ", _scene.Missing.Keys)})";
+                if (actors.Length > 0) summary += "\n" + actors;
+                return summary;
+            }
+        }
         private ReplayMediaPlayer? _media;
         public ReplayCameraRig? CameraRig { get; private set; }
         public ReplayMusic? Music { get; private set; }
@@ -41,9 +63,8 @@ namespace cameraTools.Replay
             foreach (ReplayFrame frame in _replay.Frames)
                 foreach (EntitySnapshot entity in frame.Entities)
                 {
-                    GameObject prefab = ZNetScene.instance.GetPrefab(entity.PrefabHash);
                     string kind = entity.Kind == 2 ? "ragdoll" : entity.Kind == 3 ? "drop" : entity.IsProjectile ? "projectile" : "actor";
-                    targets[(entity.ZdoUserID, entity.ZdoID)] = $"{entity.ZdoUserID}:{entity.ZdoID} {kind} {prefab?.name}";
+                    targets[(entity.ZdoUserID, entity.ZdoID)] = $"{entity.ZdoUserID}:{entity.ZdoID} {kind} {_replay.Info.PrefabName(entity.PrefabHash)}";
                 }
             return string.Join("; ", targets.Values);
         }
@@ -62,6 +83,7 @@ namespace cameraTools.Replay
         public void Detach()
         {
             _cameraTarget = null;
+            _recordedCamera = false;
             CameraRig?.Clear();
         }
 
@@ -83,7 +105,17 @@ namespace cameraTools.Replay
             Instance = this;
         }
 
-        public void StartPlayback(ReplayFile replay)
+        public void FollowRecordedCamera()
+        {
+            if (!IsPlaying) throw new InvalidOperationException("Start a replay first");
+            if (!HasRecordedCamera) throw new InvalidOperationException("This recording has no camera track");
+            cameraTools.Markers.PathPlayer.Stop();
+            CameraRig?.Clear();
+            _cameraTarget = null;
+            _recordedCamera = true;
+        }
+
+        public void StartPlayback(ReplayFile replay, bool isolated = false)
         {
             if (IsPlaying)
             {
@@ -104,7 +136,7 @@ namespace cameraTools.Replay
             }
 
             _replay = replay;
-            _ghostManager = new GhostManager();
+            _ghostManager = new GhostManager(replay.Info);
             _media = new ReplayMediaPlayer(replay);
             CameraRig = new ReplayCameraRig(_ghostManager, replay);
             Music = new ReplayMusic();
@@ -113,8 +145,20 @@ namespace cameraTools.Replay
             _paused = false;
             _lastTriggerIndex = 0;
             _activeEntities.Clear();
+            Isolated = isolated;
+            _recordedCamera = false;
+            _environment = replay.Environment.Count > 0 ? new EnvironmentPlayer(replay.Environment) : null;
 
-            if (replay.WorldEvents.Count > 0)
+            if (isolated)
+            {
+                // The recorded objects replace the world, so piece events are already in the scene.
+                _worldStatePlayer = null;
+                System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
+                _scene = new SceneTimelinePlayer(replay);
+                _scene.Seek(0f);
+                cameraToolsPlugin.TemplateLogger.LogInfo($"[ReplayPlayer] Loaded the recorded world in {clock.ElapsedMilliseconds} ms");
+            }
+            else if (replay.WorldEvents.Count > 0)
             {
                 _worldStatePlayer = new WorldStatePlayer(replay.WorldEvents, _ghostManager);
                 _worldStatePlayer.Initialize();
@@ -144,6 +188,11 @@ namespace cameraTools.Replay
             Music = null;
 
             _worldStatePlayer?.RestoreAll();
+            if (_environment != null) EnvironmentPlayer.Restore();
+            _environment = null;
+            _scene = null;
+            _recordedCamera = false;
+            Isolated = false;
             _media?.Dispose();
             _media = null;
             _worldStatePlayer = null;
@@ -179,6 +228,8 @@ namespace cameraTools.Replay
             _lastTriggerIndex = FindTriggerIndex(_playbackTime);
 
             _worldStatePlayer?.SeekTo(_playbackTime);
+            _scene?.Seek(_playbackTime);
+            _environment?.Seek(_playbackTime);
         }
 
         public void AdjustSpeed(float delta)
@@ -295,21 +346,26 @@ namespace cameraTools.Replay
 
             // Update world state
             _worldStatePlayer?.UpdatePlayback(_playbackTime);
+            _scene?.Update(_playbackTime);
+            _environment?.Update(_playbackTime);
             _media?.Update(_playbackTime, _paused, _playbackSpeed);
             // Hide live subjects locally while their recorded copies are being filmed.
             if (ZNetScene.instance != null && Time.unscaledTime >= _nextHideScan)
             {
                 _nextHideScan = Time.unscaledTime + 0.25f;
-                foreach (ZNetView view in ZNetScene.instance.m_instances.Values)
-                    if (view != null && (view.GetComponent<Character>() != null || view.GetComponent<Projectile>() != null || view.GetComponent<Ragdoll>() != null || view.GetComponent<ItemDrop>() != null))
-                        foreach (Renderer renderer in view.GetComponentsInChildren<Renderer>())
-                        {
-                            if (!_hidden.ContainsKey(renderer)) _hidden.Add(renderer, renderer.enabled);
-                            renderer.enabled = false;
-                        }
+                if (Isolated)
+                {
+                    // The session's only live actor is the hidden local player.
+                    if (Player.m_localPlayer != null) Hide(Player.m_localPlayer.gameObject);
+                }
+                else
+                    foreach (ZNetView view in ZNetScene.instance.m_instances.Values)
+                        if (view != null && (view.GetComponent<Character>() != null || view.GetComponent<Projectile>() != null || view.GetComponent<Ragdoll>() != null || view.GetComponent<ItemDrop>() != null))
+                            Hide(view.gameObject);
             }
             CameraRig?.Update();
             Music?.Update(_playbackTime, _playbackSpeed, _paused);
+            if (_recordedCamera) ApplyRecordedCamera(frameA, frameB, t);
             if (_cameraTarget.HasValue && GameCamera.m_instance != null)
             {
                 (long user, uint id) = _cameraTarget.Value;
@@ -324,7 +380,21 @@ namespace cameraTools.Replay
                         CreativeZoneCameraController.ApplyExternalTransform(camera.position, Quaternion.LookRotation(look));
                 }
             }
+            if (Isolated) ReplaySession.FollowCamera();
         }
+
+        private void Hide(GameObject root)
+        {
+            foreach (Renderer renderer in root.GetComponentsInChildren<Renderer>())
+            {
+                if (!_hidden.ContainsKey(renderer)) _hidden.Add(renderer, renderer.enabled);
+                renderer.enabled = false;
+            }
+        }
+
+        private static void ApplyRecordedCamera(ReplayFrame a, ReplayFrame b, float t) =>
+            CreativeZoneCameraController.ApplyExternalTransform(Vector3.Lerp(a.CameraPosition, b.CameraPosition, t),
+                Quaternion.Slerp(a.CameraRotation, b.CameraRotation, t));
 
         private void FirePendingTriggers()
         {

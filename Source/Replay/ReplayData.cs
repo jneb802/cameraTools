@@ -107,14 +107,18 @@ namespace cameraTools.Replay
     public class ReplayFrame
     {
         public float Time;
+        public Vector3 CameraPosition;
+        public Quaternion CameraRotation = Quaternion.identity;
         public List<EntitySnapshot> Entities = new List<EntitySnapshot>();
     }
 
     public class ReplayFile
     {
         public const string Magic = "VRPL";
-        public const int Version = 6;
+        public const int Version = 7;
 
+        public ReplayInfo Info = new();
+        public byte[] Thumbnail = System.Array.Empty<byte>();
         public long Timestamp;
         public float Duration;
         public List<ReplayFrame> Frames = new List<ReplayFrame>();
@@ -123,5 +127,9 @@ namespace cameraTools.Replay
         public List<EffectTrack> Effects = new();
         public List<SoundTrack> Sounds = new();
         public List<DeathEvent> Deaths = new();
+        public List<SceneObject> Scene = new();
+        public List<TerrainPatch> Terrain = new();
+        public List<EnvironmentSample> Environment = new();
+        public bool HasScene => Scene.Count > 0;
     }
 }

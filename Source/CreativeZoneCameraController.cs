@@ -169,6 +169,32 @@ namespace cameraTools
             }
         }
 
+        // Valheim draws its Esc menu inside the HUD, so a hidden HUD also hides the menu.
+        // Show the HUD while the menu is open and hide it again when the menu closes.
+        private static bool _hudHiddenUnderMenu;
+
+        [HarmonyLib.HarmonyPatch(typeof(Menu), nameof(Menu.Show))]
+        private static class MenuShowPatch
+        {
+            private static void Postfix()
+            {
+                if (Hud.instance == null || !Hud.instance.m_userHidden) return;
+                _hudHiddenUnderMenu = true;
+                Hud.instance.m_userHidden = false;
+            }
+        }
+
+        [HarmonyLib.HarmonyPatch(typeof(Menu), nameof(Menu.Hide))]
+        private static class MenuHidePatch
+        {
+            private static void Postfix()
+            {
+                if (!_hudHiddenUnderMenu) return;
+                _hudHiddenUnderMenu = false;
+                if (Hud.instance != null) Hud.instance.m_userHidden = true;
+            }
+        }
+
         public static void SetHudVisible(bool visible)
         {
             if (Hud.instance == null)

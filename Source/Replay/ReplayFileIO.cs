@@ -1,6 +1,7 @@
 using System.IO;
 using System.IO.Compression;
 using System.Text;
+using Newtonsoft.Json;
 
 namespace cameraTools.Replay
 {
@@ -28,12 +29,20 @@ namespace cameraTools.Replay
                 Directory.CreateDirectory(dir);
 
             using var stream = File.Create(path);
+            // Uncompressed header first so the replay browser can list files without decompressing them.
+            using (BinaryWriter header = new BinaryWriter(stream, Encoding.UTF8, true))
+            {
+                header.Write(Encoding.ASCII.GetBytes(ReplayFile.Magic));
+                header.Write(ReplayFile.Version);
+                byte[] info = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(replay.Info));
+                header.Write(info.Length);
+                header.Write(info);
+                header.Write(replay.Thumbnail.Length);
+                header.Write(replay.Thumbnail);
+            }
             using GZipStream compressed = new GZipStream(stream, CompressionLevel.Fastest);
             using var w = new BinaryWriter(compressed, Encoding.UTF8);
 
-            // Header
-            w.Write(Encoding.ASCII.GetBytes(ReplayFile.Magic)); // 4 bytes
-            w.Write(ReplayFile.Version);
             w.Write(replay.Timestamp);
             w.Write(replay.Duration);
             w.Write(replay.Frames.Count);
@@ -43,6 +52,8 @@ namespace cameraTools.Replay
             foreach (var frame in replay.Frames)
             {
                 w.Write(frame.Time);
+                ReplayMediaIO.Vector(w, frame.CameraPosition);
+                ReplayMediaIO.Rotation(w, frame.CameraRotation);
                 w.Write(frame.Entities.Count);
                 foreach (var e in frame.Entities)
                 {
@@ -132,30 +143,95 @@ namespace cameraTools.Replay
                 w.Write(we.State);
             }
             ReplayMediaIO.Write(w, replay);
+            SceneIO.Write(w, replay);
         }
 
         public static ReplayFile Read(string path)
         {
             using var stream = File.OpenRead(path);
-            bool compressed = stream.ReadByte() == 0x1f && stream.ReadByte() == 0x8b;
-            stream.Position = 0;
-            using Stream payload = compressed ? new GZipStream(stream, CompressionMode.Decompress) : stream;
-            using var r = new BinaryReader(payload, Encoding.UTF8);
+            if (IsLegacy(stream))
+            {
+                // Versions 1-4 were plain files and versions 5-6 one gzip stream, both without a header.
+                using Stream legacy = IsGzip(stream) ? new GZipStream(stream, CompressionMode.Decompress) : stream;
+                using BinaryReader legacyReader = new BinaryReader(legacy, Encoding.UTF8);
+                ReadMagic(legacyReader);
+                int legacyVersion = legacyReader.ReadInt32();
+                ReplayFile old = new ReplayFile { Info = { Name = Path.GetFileNameWithoutExtension(path) } };
+                ReadBody(legacyReader, legacyVersion, old);
+                old.Info.Duration = old.Duration;
+                return old;
+            }
+            ReplayFile replay = new ReplayFile();
+            int version = ReadHeader(stream, replay);
+            using GZipStream compressed = new GZipStream(stream, CompressionMode.Decompress);
+            using BinaryReader reader = new BinaryReader(compressed, Encoding.UTF8);
+            ReadBody(reader, version, replay);
+            return replay;
+        }
 
-            // Header
-            var magic = Encoding.ASCII.GetString(r.ReadBytes(4));
+        /// <summary>Reads only the description and preview image.</summary>
+        public static ReplayFile ReadInfo(string path)
+        {
+            using var stream = File.OpenRead(path);
+            ReplayFile replay = new ReplayFile { Info = { Name = Path.GetFileNameWithoutExtension(path) } };
+            if (IsLegacy(stream))
+            {
+                using Stream legacy = IsGzip(stream) ? new GZipStream(stream, CompressionMode.Decompress) : stream;
+                using BinaryReader reader = new BinaryReader(legacy, Encoding.UTF8);
+                ReadMagic(reader);
+                reader.ReadInt32();
+                replay.Timestamp = reader.ReadInt64();
+                replay.Info.CreatedUnix = replay.Timestamp;
+                replay.Info.Duration = reader.ReadSingle();
+                return replay;
+            }
+            ReadHeader(stream, replay);
+            return replay;
+        }
+
+        private static bool IsGzip(Stream stream)
+        {
+            bool gzip = stream.ReadByte() == 0x1f && stream.ReadByte() == 0x8b;
+            stream.Position = 0;
+            return gzip;
+        }
+
+        private static bool IsLegacy(Stream stream)
+        {
+            if (IsGzip(stream)) return true;
+            byte[] start = new byte[8];
+            int read = stream.Read(start, 0, start.Length);
+            stream.Position = 0;
+            return read < start.Length || System.BitConverter.ToInt32(start, 4) < 7;
+        }
+
+        private static void ReadMagic(BinaryReader r)
+        {
+            string magic = Encoding.ASCII.GetString(r.ReadBytes(4));
             if (magic != ReplayFile.Magic)
                 throw new InvalidDataException($"Invalid replay file magic: {magic}");
+        }
 
-            var version = r.ReadInt32();
+        private static int ReadHeader(Stream stream, ReplayFile replay)
+        {
+            using BinaryReader header = new BinaryReader(stream, Encoding.UTF8, true);
+            ReadMagic(header);
+            int version = header.ReadInt32();
             if (version > ReplayFile.Version)
-                throw new InvalidDataException($"Unsupported replay version: {version}");
+                throw new InvalidDataException($"Replay version {version} needs a newer cameraTools");
+            int infoLength = header.ReadInt32();
+            if (infoLength < 0 || infoLength > 64 * 1024 * 1024) throw new InvalidDataException("Invalid replay header");
+            replay.Info = JsonConvert.DeserializeObject<ReplayInfo>(Encoding.UTF8.GetString(header.ReadBytes(infoLength))) ?? new ReplayInfo();
+            int thumbnailLength = header.ReadInt32();
+            if (thumbnailLength < 0 || thumbnailLength > 16 * 1024 * 1024) throw new InvalidDataException("Invalid replay preview");
+            replay.Thumbnail = header.ReadBytes(thumbnailLength);
+            return version;
+        }
 
-            var replay = new ReplayFile
-            {
-                Timestamp = r.ReadInt64(),
-                Duration = r.ReadSingle()
-            };
+        private static void ReadBody(BinaryReader r, int version, ReplayFile replay)
+        {
+            replay.Timestamp = r.ReadInt64();
+            replay.Duration = r.ReadSingle();
             int frameCount = r.ReadInt32();
             int triggerCount = r.ReadInt32();
 
@@ -163,6 +239,11 @@ namespace cameraTools.Replay
             for (int f = 0; f < frameCount; f++)
             {
                 var frame = new ReplayFrame { Time = r.ReadSingle() };
+                if (version >= 7)
+                {
+                    frame.CameraPosition = ReplayMediaIO.Vector(r);
+                    frame.CameraRotation = ReplayMediaIO.Rotation(r);
+                }
                 int entityCount = r.ReadInt32();
                 for (int e = 0; e < entityCount; e++)
                 {
@@ -254,7 +335,7 @@ namespace cameraTools.Replay
             }
 
             if (version >= 6) ReplayMediaIO.Read(r, replay);
-            return replay;
+            if (version >= 7) SceneIO.Read(r, replay);
         }
 
         public static string GetReplayDirectory()
