@@ -1,4 +1,5 @@
 using System.IO;
+using System.IO.Compression;
 using System.Text;
 
 namespace cameraTools.Replay
@@ -12,7 +13,8 @@ namespace cameraTools.Replay
                 Directory.CreateDirectory(dir);
 
             using var stream = File.Create(path);
-            using var w = new BinaryWriter(stream, Encoding.UTF8);
+            using GZipStream compressed = new GZipStream(stream, CompressionLevel.Fastest);
+            using var w = new BinaryWriter(compressed, Encoding.UTF8);
 
             // Header
             w.Write(Encoding.ASCII.GetBytes(ReplayFile.Magic)); // 4 bytes
@@ -52,6 +54,18 @@ namespace cameraTools.Replay
                     // State ints (8 bytes)
                     w.Write(e.StateF);
                     w.Write(e.StateI);
+                    w.Write(e.IsProjectile);
+                    w.Write(e.Pose?.Count ?? 0);
+                    if (e.Pose != null)
+                    {
+                        foreach (BonePose bone in e.Pose)
+                        {
+                            w.Write(bone.Path);
+                            w.Write(bone.Position.x); w.Write(bone.Position.y); w.Write(bone.Position.z);
+                            w.Write(bone.Rotation.x); w.Write(bone.Rotation.y); w.Write(bone.Rotation.z); w.Write(bone.Rotation.w);
+                            w.Write(bone.Scale.x); w.Write(bone.Scale.y); w.Write(bone.Scale.z);
+                        }
+                    }
                     // Equipment (version 3+; item hashes as int since version 4)
                     w.Write(e.HasEquipment);
                     if (e.HasEquipment)
@@ -107,7 +121,10 @@ namespace cameraTools.Replay
         public static ReplayFile Read(string path)
         {
             using var stream = File.OpenRead(path);
-            using var r = new BinaryReader(stream, Encoding.UTF8);
+            bool compressed = stream.ReadByte() == 0x1f && stream.ReadByte() == 0x8b;
+            stream.Position = 0;
+            using Stream payload = compressed ? new GZipStream(stream, CompressionMode.Decompress) : stream;
+            using var r = new BinaryReader(payload, Encoding.UTF8);
 
             // Header
             var magic = Encoding.ASCII.GetString(r.ReadBytes(4));
@@ -147,6 +164,22 @@ namespace cameraTools.Replay
                         StateF = r.ReadInt32(),
                         StateI = r.ReadInt32()
                     };
+                    if (version >= 5)
+                    {
+                        snapshot.IsProjectile = r.ReadBoolean();
+                        int boneCount = r.ReadInt32();
+                        if (boneCount < 0 || boneCount > 4096)
+                            throw new InvalidDataException("Invalid pose count");
+                        snapshot.Pose = new System.Collections.Generic.List<BonePose>(boneCount);
+                        for (int bone = 0; bone < boneCount; bone++)
+                            snapshot.Pose.Add(new BonePose
+                            {
+                                Path = r.ReadString(),
+                                Position = new UnityEngine.Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle()),
+                                Rotation = new UnityEngine.Quaternion(r.ReadSingle(), r.ReadSingle(), r.ReadSingle(), r.ReadSingle()),
+                                Scale = new UnityEngine.Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle())
+                            });
+                    }
                     if (version >= 3 && r.ReadBoolean())
                     {
                         snapshot.HasEquipment = true;

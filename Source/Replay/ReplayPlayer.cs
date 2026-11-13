@@ -4,6 +4,7 @@ using UnityEngine;
 
 namespace cameraTools.Replay
 {
+    [DefaultExecutionOrder(20000)]
     public class ReplayPlayer : MonoBehaviour
     {
         public static ReplayPlayer Instance { get; private set; } = null!;
@@ -16,9 +17,40 @@ namespace cameraTools.Replay
         private bool _paused;
         private int _lastTriggerIndex;
         private WorldStatePlayer? _worldStatePlayer;
+        private (long, uint)? _cameraTarget;
+        private Vector3 _cameraOffset = new Vector3(0, 2, -6);
+        private bool _localOffset;
+        private readonly Dictionary<Renderer, bool> _hidden = new();
+        private float _nextHideScan;
+        public string Targets()
+        {
+            if (_replay == null) return "No replay loaded";
+            Dictionary<(long, uint), string> targets = new();
+            foreach (ReplayFrame frame in _replay.Frames)
+                foreach (EntitySnapshot entity in frame.Entities)
+                {
+                    GameObject prefab = ZNetScene.instance.GetPrefab(entity.PrefabHash);
+                    targets[(entity.ZdoUserID, entity.ZdoID)] = $"{entity.ZdoUserID}:{entity.ZdoID} {(entity.IsProjectile ? "projectile" : "actor")} {prefab?.name}";
+                }
+            return string.Join("; ", targets.Values);
+        }
+        public void Follow(long user, uint id, Vector3 offset, bool local)
+        {
+            if (!IsPlaying) throw new InvalidOperationException("Start a replay first");
+            if (offset.sqrMagnitude < 0.001f) throw new ArgumentException("Camera offset must be nonzero");
+            bool found = false;
+            foreach (ReplayFrame frame in _replay!.Frames)
+                if (frame.Entities.Exists(entity => entity.ZdoUserID == user && entity.ZdoID == id)) { found = true; break; }
+            if (!found) throw new ArgumentException("Recorded target does not exist; use ct_replay targets");
+            cameraTools.Markers.PathPlayer.Stop();
+            _cameraTarget = (user, id); _cameraOffset = offset; _localOffset = local;
+        }
+        public void Detach() => _cameraTarget = null;
 
         // Entities present in the current interpolation window
         private readonly HashSet<(long, uint)> _activeEntities = new HashSet<(long, uint)>();
+        private readonly HashSet<(long, uint)> _currentEntities = new();
+        private readonly Dictionary<(long, uint), EntitySnapshot> _frameBEntities = new();
 
         // Public accessors for timeline UI
         public float PlaybackTime => _playbackTime;
@@ -91,6 +123,10 @@ namespace cameraTools.Replay
             _ghostManager = null;
             _replay = null;
             _activeEntities.Clear();
+            _cameraTarget = null;
+            foreach (Renderer renderer in _hidden.Keys)
+                if (renderer != null) renderer.enabled = _hidden[renderer];
+            _hidden.Clear();
             IsPlaying = false;
             _paused = false;
 
@@ -110,12 +146,9 @@ namespace cameraTools.Replay
         public void Seek(float time)
         {
             if (_replay == null) return;
-            float oldTime = _playbackTime;
             _playbackTime = Mathf.Clamp(time, 0f, _replay.Duration);
 
-            // If seeking backward, reset trigger index
-            if (_playbackTime < oldTime)
-                _lastTriggerIndex = FindTriggerIndex(_playbackTime);
+            _lastTriggerIndex = FindTriggerIndex(_playbackTime);
 
             _worldStatePlayer?.SeekTo(_playbackTime);
         }
@@ -124,6 +157,7 @@ namespace cameraTools.Replay
         {
             _playbackSpeed = Mathf.Clamp(_playbackSpeed + delta, 0.1f, 4f);
         }
+        public void SetSpeed(float speed) => _playbackSpeed = Mathf.Clamp(speed, 0.1f, 4f);
 
         private void LateUpdate()
         {
@@ -153,10 +187,12 @@ namespace cameraTools.Replay
             float t = (frameDuration > 0.0001f) ? Mathf.Clamp01((_playbackTime - frameA.Time) / frameDuration) : 0f;
 
             // Track which entities are in this window
-            var currentEntities = new HashSet<(long, uint)>();
+            HashSet<(long, uint)> currentEntities = _currentEntities;
+            currentEntities.Clear();
 
             // Index frameB entities for quick lookup
-            var frameBEntities = new Dictionary<(long, uint), EntitySnapshot>();
+            Dictionary<(long, uint), EntitySnapshot> frameBEntities = _frameBEntities;
+            frameBEntities.Clear();
             foreach (var e in frameB.Entities)
                 frameBEntities[(e.ZdoUserID, e.ZdoID)] = e;
 
@@ -195,11 +231,13 @@ namespace cameraTools.Replay
                 }
 
                 _ghostManager.UpdateEquipment(a.ZdoUserID, a.ZdoID, equipSource);
+                _ghostManager.ApplyPose(a, frameBEntities.TryGetValue(key, out EntitySnapshot nextPose) ? nextPose : a, t);
             }
 
             // Also include entities that only appear in frameB
             foreach (var b in frameB.Entities)
             {
+                if (_playbackTime < frameB.Time) continue;
                 var key = (b.ZdoUserID, b.ZdoID);
                 if (currentEntities.Contains(key))
                     continue;
@@ -209,6 +247,7 @@ namespace cameraTools.Replay
                 _ghostManager.UpdateGhost(b.ZdoUserID, b.ZdoID, b.Position, b.Rotation,
                     b.ForwardSpeed, b.SidewaySpeed, b.TurnSpeed, b.AnimBools, b.StateF, b.StateI);
                 _ghostManager.UpdateEquipment(b.ZdoUserID, b.ZdoID, b);
+                _ghostManager.ApplyPose(b, b, 0f);
             }
 
             // Prune ghosts for entities no longer present
@@ -226,6 +265,32 @@ namespace cameraTools.Replay
 
             // Update world state
             _worldStatePlayer?.UpdatePlayback(_playbackTime);
+            // Hide live subjects locally while their recorded copies are being filmed.
+            if (ZNetScene.instance != null && Time.unscaledTime >= _nextHideScan)
+            {
+                _nextHideScan = Time.unscaledTime + 0.25f;
+                foreach (ZNetView view in ZNetScene.instance.m_instances.Values)
+                    if (view != null && (view.GetComponent<Character>() != null || view.GetComponent<Projectile>() != null))
+                        foreach (Renderer renderer in view.GetComponentsInChildren<Renderer>())
+                        {
+                            if (!_hidden.ContainsKey(renderer)) _hidden.Add(renderer, renderer.enabled);
+                            renderer.enabled = false;
+                        }
+            }
+            if (_cameraTarget.HasValue && GameCamera.m_instance != null)
+            {
+                (long user, uint id) = _cameraTarget.Value;
+                GameObject? target = _ghostManager.GetWorldGhostObject(user, id);
+                if (target != null)
+                {
+                    Transform camera = GameCamera.m_instance.transform;
+                    Vector3 offset = _localOffset ? target.transform.rotation * _cameraOffset : _cameraOffset;
+                    camera.position = target.transform.position + offset;
+                    Vector3 look = target.transform.position - camera.position;
+                    if (look.sqrMagnitude > 0.001f)
+                        CreativeZoneCameraController.ApplyExternalTransform(camera.position, Quaternion.LookRotation(look));
+                }
+            }
         }
 
         private void FirePendingTriggers()

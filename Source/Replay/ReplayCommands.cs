@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Globalization;
+using UnityEngine;
 
 namespace cameraTools.Replay
 {
@@ -8,6 +10,33 @@ namespace cameraTools.Replay
     {
         public static void Register()
         {
+            new Terminal.ConsoleCommand("ct_replay", "ct_replay status|targets|pause|play|seek <seconds>|speed <0.1-4>|detach|follow <user:id> <x> <y> <z> [local]", args =>
+            {
+                try
+                {
+                    ReplayPlayer player = ReplayPlayer.Instance;
+                    if (!ReplayPlayer.IsPlaying) { args.Context.AddString("ERROR: Start a replay first"); return; }
+                    string action = args.Length > 1 ? args[1].ToLowerInvariant() : "status";
+                    switch (action)
+                    {
+                        case "status": args.Context.AddString($"time={player.PlaybackTime:F3} duration={player.Duration:F3} paused={player.IsPaused} speed={player.PlaybackSpeed:F2}"); break;
+                        case "targets": args.Context.AddString(player.Targets()); break;
+                        case "pause": player.SetPaused(true); break;
+                        case "play": player.SetPaused(false); break;
+                        case "detach": player.Detach(); break;
+                        case "ui": ReplayTimelinePanel.Visible = !ReplayTimelinePanel.Visible; break;
+                        case "seek": player.Seek(Number(args[2])); break;
+                        case "speed": player.SetSpeed(Number(args[2])); break;
+                        case "follow":
+                            string[] id = args[2].Split(':');
+                            player.Follow(long.Parse(id[0]), uint.Parse(id[1]), new Vector3(Number(args[3]), Number(args[4]), Number(args[5])), args.Length > 6 && args[6] == "local");
+                            break;
+                        default: throw new System.ArgumentException("Unknown replay action");
+                    }
+                    args.Context.AddString("OK: " + action);
+                }
+                catch (System.Exception error) { args.Context.AddString("ERROR: " + error.Message); }
+            });
             new Terminal.ConsoleCommand(
                 "record",
                 "Recording: record [name] | record stop",
@@ -21,6 +50,13 @@ namespace cameraTools.Replay
                 RunReplay,
                 optionsFetcher: GetReplayOptions
             );
+        }
+
+        private static float Number(string value)
+        {
+            float number = float.Parse(value, CultureInfo.InvariantCulture);
+            if (float.IsNaN(number) || float.IsInfinity(number)) throw new System.ArgumentException("Use a finite number");
+            return number;
         }
 
         private static void RunRecord(Terminal.ConsoleEventArgs args)
