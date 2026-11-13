@@ -27,6 +27,7 @@ namespace cameraTools
 
         public static ConfigEntry<KeyboardShortcut> PanelToggleKey = null!;
         public static ConfigEntry<float> DefaultSmoothness = null!;
+        public static ConfigEntry<int> ReplayMemoryBudgetMiB = null!;
 
         public void Awake()
         {
@@ -34,6 +35,9 @@ namespace cameraTools
                 "Hotkey to toggle the camera tools panel");
             DefaultSmoothness = Config.Bind("Camera", "DefaultSmoothness", 0.5f,
                 new ConfigDescription("Default free fly smoothness", new AcceptableValueRange<float>(0f, 1f)));
+            ReplayMemoryBudgetMiB = Config.Bind("Replay", "MemoryBudgetMiB", 2048,
+                new ConfigDescription("Estimated recording sample memory budget in MiB. The take saves automatically at this budget or 10 minutes. Lower this on machines with limited free memory; effects increase memory use.",
+                    new AcceptableValueRange<int>(128, 8192)));
 
             MarkerMode.BindConfig(Config);
 

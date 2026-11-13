@@ -17,11 +17,21 @@ namespace cameraTools.Replay
         private bool _paused;
         private int _lastTriggerIndex;
         private WorldStatePlayer? _worldStatePlayer;
+        private ReplayMediaPlayer? _media;
         private (long, uint)? _cameraTarget;
         private Vector3 _cameraOffset = new Vector3(0, 2, -6);
         private bool _localOffset;
         private readonly Dictionary<Renderer, bool> _hidden = new();
         private float _nextHideScan;
+        public string Media()
+        {
+            if (_replay == null) return "No replay loaded";
+            List<string> lines = new() { $"effects={_replay.Effects.Count} sounds={_replay.Sounds.Count} deaths={_replay.Deaths.Count}" };
+            foreach (DeathEvent death in _replay.Deaths) lines.Add($"death {death.Time:F3}s {death.Name}");
+            foreach (EffectTrack track in _replay.Effects) lines.Add($"effect {track.Start:F3}-{track.End:F3}s {track.Prefab} frames={track.Frames.Count}");
+            foreach (SoundTrack track in _replay.Sounds) lines.Add($"sound {track.Start:F3}-{track.End:F3}s {track.Clip} frames={track.Frames.Count}");
+            return string.Join("\n", lines);
+        }
         public string Targets()
         {
             if (_replay == null) return "No replay loaded";
@@ -30,7 +40,8 @@ namespace cameraTools.Replay
                 foreach (EntitySnapshot entity in frame.Entities)
                 {
                     GameObject prefab = ZNetScene.instance.GetPrefab(entity.PrefabHash);
-                    targets[(entity.ZdoUserID, entity.ZdoID)] = $"{entity.ZdoUserID}:{entity.ZdoID} {(entity.IsProjectile ? "projectile" : "actor")} {prefab?.name}";
+                    string kind = entity.Kind == 2 ? "ragdoll" : entity.Kind == 3 ? "drop" : entity.IsProjectile ? "projectile" : "actor";
+                    targets[(entity.ZdoUserID, entity.ZdoID)] = $"{entity.ZdoUserID}:{entity.ZdoID} {kind} {prefab?.name}";
                 }
             return string.Join("; ", targets.Values);
         }
@@ -87,6 +98,7 @@ namespace cameraTools.Replay
 
             _replay = replay;
             _ghostManager = new GhostManager();
+            _media = new ReplayMediaPlayer(replay);
             _playbackTime = 0f;
             _playbackSpeed = 1f;
             _paused = false;
@@ -118,6 +130,8 @@ namespace cameraTools.Replay
                 return;
 
             _worldStatePlayer?.RestoreAll();
+            _media?.Dispose();
+            _media = null;
             _worldStatePlayer = null;
             _ghostManager?.DestroyAll();
             _ghostManager = null;
@@ -232,6 +246,7 @@ namespace cameraTools.Replay
 
                 _ghostManager.UpdateEquipment(a.ZdoUserID, a.ZdoID, equipSource);
                 _ghostManager.ApplyPose(a, frameBEntities.TryGetValue(key, out EntitySnapshot nextPose) ? nextPose : a, t);
+                _ghostManager.ApplyVisual(a, frameBEntities.TryGetValue(key, out EntitySnapshot nextVisual) ? nextVisual : a, t);
             }
 
             // Also include entities that only appear in frameB
@@ -248,6 +263,7 @@ namespace cameraTools.Replay
                     b.ForwardSpeed, b.SidewaySpeed, b.TurnSpeed, b.AnimBools, b.StateF, b.StateI);
                 _ghostManager.UpdateEquipment(b.ZdoUserID, b.ZdoID, b);
                 _ghostManager.ApplyPose(b, b, 0f);
+                _ghostManager.ApplyVisual(b, b, 0f);
             }
 
             // Prune ghosts for entities no longer present
@@ -265,12 +281,13 @@ namespace cameraTools.Replay
 
             // Update world state
             _worldStatePlayer?.UpdatePlayback(_playbackTime);
+            _media?.Update(_playbackTime, _paused, _playbackSpeed);
             // Hide live subjects locally while their recorded copies are being filmed.
             if (ZNetScene.instance != null && Time.unscaledTime >= _nextHideScan)
             {
                 _nextHideScan = Time.unscaledTime + 0.25f;
                 foreach (ZNetView view in ZNetScene.instance.m_instances.Values)
-                    if (view != null && (view.GetComponent<Character>() != null || view.GetComponent<Projectile>() != null))
+                    if (view != null && (view.GetComponent<Character>() != null || view.GetComponent<Projectile>() != null || view.GetComponent<Ragdoll>() != null || view.GetComponent<ItemDrop>() != null))
                         foreach (Renderer renderer in view.GetComponentsInChildren<Renderer>())
                         {
                             if (!_hidden.ContainsKey(renderer)) _hidden.Add(renderer, renderer.enabled);

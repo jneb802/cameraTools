@@ -58,11 +58,6 @@ namespace cameraTools.Replay
             if (ZNetScene.instance == null || ZDOMan.instance == null)
                 return;
 
-            // Build current frame set from ZDOMan
-            var currentFrameZdos = new HashSet<ZDOID>();
-            foreach (var kvp in ZDOMan.instance.m_objectsByID)
-                currentFrameZdos.Add(kvp.Key);
-
             // Check for new and modified ZDOs
             foreach (var kvp in ZNetScene.instance.m_instances)
             {
@@ -152,7 +147,7 @@ namespace cameraTools.Replay
             var destroyed = new List<ZDOID>();
             foreach (var zdoid in _trackedPieces.Keys)
             {
-                if (!currentFrameZdos.Contains(zdoid))
+                if (!ZDOMan.instance.m_objectsByID.ContainsKey(zdoid))
                     destroyed.Add(zdoid);
             }
 

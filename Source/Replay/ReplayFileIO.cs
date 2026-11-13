@@ -8,6 +8,21 @@ namespace cameraTools.Replay
     {
         public static void Write(string path, ReplayFile replay)
         {
+            string temporary = path + ".saving-" + System.Guid.NewGuid().ToString("N");
+            try
+            {
+                WriteContents(temporary, replay);
+                if (File.Exists(path)) File.Replace(temporary, path, null);
+                else File.Move(temporary, path);
+            }
+            finally
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+            }
+        }
+
+        private static void WriteContents(string path, ReplayFile replay)
+        {
             var dir = Path.GetDirectoryName(path);
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                 Directory.CreateDirectory(dir);
@@ -116,6 +131,7 @@ namespace cameraTools.Replay
                 w.Write(we.HealthFraction);
                 w.Write(we.State);
             }
+            ReplayMediaIO.Write(w, replay);
         }
 
         public static ReplayFile Read(string path)
@@ -237,6 +253,7 @@ namespace cameraTools.Replay
                 }
             }
 
+            if (version >= 6) ReplayMediaIO.Read(r, replay);
             return replay;
         }
 

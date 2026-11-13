@@ -17,12 +17,14 @@ namespace cameraTools.Replay
             public Animator? Animator;
             public VisEquipment? VisEquipment;
             public readonly Dictionary<string, Transform> Bones = new();
+            public VisualPlayer Visual;
 
             public GhostInstance(GameObject go, Animator? animator, VisEquipment? visEquipment)
             {
                 GameObject = go;
                 Animator = animator;
                 VisEquipment = visEquipment;
+                Visual = new VisualPlayer(go);
             }
         }
 
@@ -59,7 +61,21 @@ namespace cameraTools.Replay
                 return null;
             }
 
-            // Spawn ghost without ZDO registration
+            GameObject ghost = CreateVisual(prefab, position, rotation);
+
+            var animator = ghost.GetComponentInChildren<Animator>();
+            var visEquipment = ghost.GetComponent<VisEquipment>();
+            if (!_ghosts.TryGetValue(userID, out innerDict))
+            {
+                innerDict = new Dictionary<uint, GhostInstance>();
+                _ghosts[userID] = innerDict;
+            }
+            innerDict[objectID] = new GhostInstance(ghost, animator, visEquipment);
+            return ghost;
+        }
+
+        internal static GameObject CreateVisual(GameObject prefab, Vector3 position, Quaternion rotation)
+        {
             bool previousDisable = ZNetView.m_forceDisableInit;
             GameObject ghost;
             GameObject staging = new GameObject("Replay staging");
@@ -72,6 +88,10 @@ namespace cameraTools.Replay
                 foreach (Collider collider in ghost.GetComponentsInChildren<Collider>(true)) collider.enabled = false;
                 foreach (Rigidbody body in ghost.GetComponentsInChildren<Rigidbody>(true)) body.isKinematic = true;
                 foreach (Animator animation in ghost.GetComponentsInChildren<Animator>(true)) animation.fireEvents = false;
+                foreach (AudioSource source in ghost.GetComponentsInChildren<AudioSource>(true))
+                { source.playOnAwake = false; source.enabled = false; }
+                foreach (ParticleSystem particles in ghost.GetComponentsInChildren<ParticleSystem>(true))
+                { ParticleSystem.MainModule main = particles.main; main.playOnAwake = false; particles.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear); }
                 ghost.transform.SetParent(null, true);
             }
             finally
@@ -80,18 +100,14 @@ namespace cameraTools.Replay
                 Object.Destroy(staging);
             }
 
-            var animator = ghost.GetComponentInChildren<Animator>();
-            var visEquipment = ghost.GetComponent<VisEquipment>();
-
-            // Store
-            if (!_ghosts.TryGetValue(userID, out innerDict))
-            {
-                innerDict = new Dictionary<uint, GhostInstance>();
-                _ghosts[userID] = innerDict;
-            }
-            innerDict[objectID] = new GhostInstance(ghost, animator, visEquipment);
-
             return ghost;
+        }
+
+        internal void ApplyVisual(EntitySnapshot a, EntitySnapshot b, float fraction)
+        {
+            if (a.Visual != null && _ghosts.TryGetValue(a.ZdoUserID, out Dictionary<uint, GhostInstance> entries)
+                && entries.TryGetValue(a.ZdoID, out GhostInstance ghost))
+                ghost.Visual.Apply(a.Visual, b.Visual ?? a.Visual, fraction);
         }
 
         public void UpdateGhost(long userID, uint objectID, Vector3 position, Quaternion rotation,

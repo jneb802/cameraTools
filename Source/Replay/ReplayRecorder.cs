@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using UnityEngine;
 
 namespace cameraTools.Replay
@@ -10,6 +11,13 @@ namespace cameraTools.Replay
         public static ReplayRecorder Instance { get; private set; } = null!;
         public static bool IsRecording { get; private set; }
         public string RecordingName { get; private set; } = "";
+        private string _stopReason = "";
+        private Task? _saveTask;
+        private string _saveSummary = "";
+        public bool IsSaving => _saveTask != null;
+        public string Status => IsSaving ? $"Saving {RecordingName}; wait for the save-complete message." : IsRecording
+            ? $"Recording {RecordingName}: {Time.time - _recordStartTime:F1}s, estimated {_estimatedBytes / (1024f * 1024f):F1}/{cameraToolsPlugin.ReplayMemoryBudgetMiB.Value} MiB, maximum 600s"
+            : $"Not recording. Last take: {RecordingName}. {_stopReason}";
 
         private const int ZdoSalt = 438569;
 
@@ -31,6 +39,7 @@ namespace cameraTools.Replay
         private float _recordStartTime;
         private readonly List<TriggerEvent> _pendingTriggers = new List<TriggerEvent>();
         private WorldStateRecorder? _worldStateRecorder;
+        private ReplayMediaRecorder? _media;
         private float _nextSample;
         private long _estimatedBytes;
         private readonly Dictionary<Animator, List<(string Path, Transform Bone)>> _bones = new();
@@ -40,18 +49,20 @@ namespace cameraTools.Replay
             Instance = this;
         }
 
-        public void StartRecording(string? name = null)
+        public bool StartRecording(string? name = null)
         {
+            CompleteSave();
+            if (IsSaving) return false;
             if (IsRecording)
             {
                 cameraToolsPlugin.TemplateLogger.LogWarning("Already recording!");
-                return;
+                return false;
             }
 
             if (ReplayPlayer.IsPlaying)
             {
                 cameraToolsPlugin.TemplateLogger.LogWarning("Cannot record while replaying!");
-                return;
+                return false;
             }
 
             RecordingName = name ?? DateTime.Now.ToString("yyyy-MM-dd_HHmmss");
@@ -65,12 +76,15 @@ namespace cameraTools.Replay
             _nextSample = 0f;
             _bones.Clear();
             _estimatedBytes = 0;
+            _stopReason = "";
 
             _worldStateRecorder = new WorldStateRecorder();
             _worldStateRecorder.CaptureBaseline();
 
             IsRecording = true;
+            _media = new ReplayMediaRecorder(_currentReplay);
             cameraToolsPlugin.TemplateLogger.LogInfo($"Recording started: {RecordingName}");
+            return true;
         }
 
         public void StopRecording()
@@ -82,6 +96,8 @@ namespace cameraTools.Replay
             }
 
             IsRecording = false;
+            ReplayMediaRecorder.Active = null;
+            _media = null;
             _currentReplay.Duration = Time.time - _recordStartTime;
             _currentReplay.TriggerEvents.AddRange(_pendingTriggers);
 
@@ -93,21 +109,32 @@ namespace cameraTools.Replay
             }
 
             var path = System.IO.Path.Combine(ReplayFileIO.GetReplayDirectory(), RecordingName + ".valreplay");
-            try
-            {
-                ReplayFileIO.Write(path, _currentReplay);
-                int worldCount = _currentReplay.WorldEvents.Count;
-                string worldInfo = worldCount > 0 ? $", {worldCount} world events" : "";
-                cameraToolsPlugin.TemplateLogger.LogInfo($"Recording saved: {RecordingName}.valreplay ({_currentReplay.Frames.Count} frames, {_currentReplay.Duration:F1}s{worldInfo})");
-            }
-            catch (Exception ex)
-            {
-                cameraToolsPlugin.TemplateLogger.LogError($"Failed to save replay: {ex.Message}");
-            }
-
+            ReplayFile completed = _currentReplay;
             _currentReplay = null;
             _pendingTriggers.Clear();
             _worldStateRecorder = null;
+            _bones.Clear();
+            _saveSummary = $"Recording saved: {RecordingName}.valreplay ({completed.Frames.Count} frames, {completed.Duration:F1}s, {completed.Effects.Count} effects, {completed.Sounds.Count} sounds, {completed.Deaths.Count} deaths)";
+            // Samples contain copied structs and strings, not live Unity objects.
+            _saveTask = Task.Run(() => ReplayFileIO.Write(path, completed));
+        }
+
+        private void CompleteSave(bool notify = true)
+        {
+            if (_saveTask == null || !_saveTask.IsCompleted) return;
+            if (_saveTask.IsFaulted || _saveTask.IsCanceled)
+            {
+                _stopReason = "Save failed: " + (_saveTask.Exception?.GetBaseException().Message ?? "cancelled");
+                cameraToolsPlugin.TemplateLogger.LogError(_stopReason);
+            }
+            else
+            {
+                cameraToolsPlugin.TemplateLogger.LogInfo(_saveSummary);
+                _stopReason = "Saved. " + _stopReason;
+            }
+            _saveTask = null;
+            if (notify && MessageHud.instance != null)
+                MessageHud.instance.ShowMessage(MessageHud.MessageType.Center, RecordingName + ": " + _stopReason);
         }
 
         public void CaptureTrigger(ZDOID zdoid, string triggerName)
@@ -126,6 +153,7 @@ namespace cameraTools.Replay
 
         private void LateUpdate()
         {
+            CompleteSave();
             if (!IsRecording || _currentReplay == null)
                 return;
 
@@ -135,9 +163,11 @@ namespace cameraTools.Replay
             float elapsed = Time.time - _recordStartTime;
             if (elapsed < _nextSample) return;
             _nextSample = elapsed + 1f / 30f;
-            if (elapsed >= 600f || _estimatedBytes >= 256L * 1024 * 1024)
+            if (elapsed >= 600f || _estimatedBytes >= (long)cameraToolsPlugin.ReplayMemoryBudgetMiB.Value * 1024 * 1024)
             {
-                cameraToolsPlugin.TemplateLogger.LogWarning("Recording limit reached; saving take (10 minutes or approximately 256 MiB of sample data).");
+                _stopReason = elapsed >= 600f ? "Reached the 10-minute limit." : "Reached the configured recording memory budget.";
+                cameraToolsPlugin.TemplateLogger.LogWarning(_stopReason + " Saving take.");
+                MessageHud.instance?.ShowMessage(MessageHud.MessageType.Center, "Saving replay: " + _stopReason);
                 StopRecording(); return;
             }
 
@@ -145,6 +175,7 @@ namespace cameraTools.Replay
             {
                 Time = Time.time - _recordStartTime
             };
+            _media?.BeginSample();
 
             foreach (var kvp in ZNetScene.instance.m_instances)
             {
@@ -156,7 +187,9 @@ namespace cameraTools.Replay
 
                 var character = nview.GetComponent<Character>();
                 Projectile projectile = nview.GetComponent<Projectile>();
-                if (character == null && projectile == null)
+                Ragdoll ragdoll = nview.GetComponent<Ragdoll>();
+                ItemDrop drop = nview.GetComponent<ItemDrop>();
+                if (character == null && projectile == null && ragdoll == null && drop == null)
                     continue;
                 if (Player.m_localPlayer != null && Vector3.Distance(nview.transform.position, Player.m_localPlayer.transform.position) > 150f)
                     continue;
@@ -164,6 +197,7 @@ namespace cameraTools.Replay
                 var snapshot = new EntitySnapshot
                 {
                     IsProjectile = projectile != null,
+                    Kind = projectile != null ? (byte)1 : ragdoll != null ? (byte)2 : drop != null ? (byte)3 : (byte)0,
                     ZdoUserID = zdo.m_uid.UserID,
                     ZdoID = zdo.m_uid.ID,
                     PrefabHash = zdo.GetPrefab(),
@@ -224,23 +258,26 @@ namespace cameraTools.Replay
                     snapshot.RightBackItem = visEquip.m_rightBackItem;
                 }
 
+                snapshot.Visual = ReplayVisuals.Capture(nview.gameObject, ragdoll != null, ref _estimatedBytes);
                 frame.Entities.Add(snapshot);
+                _media?.Sounds(nview.gameObject, elapsed, ref _estimatedBytes);
                 _estimatedBytes += 256 + (snapshot.Pose?.Count ?? 0) * 80L;
             }
 
             _currentReplay.Frames.Add(frame);
+            _media?.Sample(elapsed, ref _estimatedBytes);
 
             _worldStateRecorder?.ScanFrame(frame.Time);
         }
 
         private void OnDestroy()
         {
-            if (IsRecording)
+            if (IsRecording) StopRecording();
+            if (_saveTask != null)
             {
-                IsRecording = false;
-                _currentReplay = null;
-                _pendingTriggers.Clear();
-                _worldStateRecorder = null;
+                try { _saveTask.Wait(); }
+                catch (AggregateException) { /* Report the task failure below. */ }
+                CompleteSave(false);
             }
         }
 
