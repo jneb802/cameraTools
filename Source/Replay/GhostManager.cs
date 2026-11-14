@@ -244,7 +244,7 @@ namespace cameraTools.Replay
             {
                 BonePose first = a.Pose[index];
                 BonePose second = b.Pose != null && index < b.Pose.Count && b.Pose[index].Path == first.Path ? b.Pose[index] : first;
-                if (!ghost.Bones.TryGetValue(first.Path, out Transform bone))
+                if (!ghost.Bones.TryGetValue(first.Path, out Transform bone) || bone == null)
                 {
                     bone = ghost.GameObject.transform.Find(first.Path);
                     if (bone == null) continue;
