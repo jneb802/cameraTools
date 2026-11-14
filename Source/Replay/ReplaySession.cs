@@ -113,7 +113,6 @@ namespace cameraTools.Replay
             player.m_debugFly = true;
             foreach (Collider collider in player.GetComponentsInChildren<Collider>()) collider.enabled = false;
             CreativeZoneCameraController.SetHudVisible(false);
-            ReplayTimelinePanel.Visible = true;
             CreativeZoneCameraController.SetFreeFly(true);
             CreativeZoneCameraController.ApplyExternalTransform(StartPosition, Replay!.Info.StartRotation);
             ReplayPlayer.Instance.StartPlayback(Replay, true);

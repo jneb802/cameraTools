@@ -2,33 +2,14 @@ using UnityEngine;
 
 namespace cameraTools.Replay
 {
-    public class ReplayTimelinePanel : MonoBehaviour
+    /// <summary>The Replay tab of the cameraTools window. Its state lives here, so hiding the window keeps it.</summary>
+    internal sealed class ReplayControls
     {
-        public static bool Visible = true;
-        private Rect _windowRect;
-        private const int WindowId = 98235;
         private readonly PanelDropdown _music = new();
         private readonly PanelDropdown _targets = new();
         private string _message = "";
 
-        private void Start() => _windowRect = new Rect((Screen.width - 680f) / 2, Screen.height - 510f, 680f, 490f);
-
-        private void OnGUI()
-        {
-            if (!ReplayPlayer.IsPlaying || !Visible) return;
-            GUISkin previous = GUI.skin;
-            GUI.skin = CameraPanelStyle.Skin;
-            try
-            {
-                _windowRect.height = 0;
-                _windowRect = GUILayout.Window(WindowId, _windowRect, DrawWindow, "Combat Replay", GUILayout.Width(680));
-                _windowRect = CameraPanelStyle.Clamp(_windowRect);
-                CameraPanelStyle.ReplayRect = _windowRect;
-            }
-            finally { GUI.skin = previous; }
-        }
-
-        private void DrawWindow(int id)
+        internal void Draw()
         {
             ReplayPlayer player = ReplayPlayer.Instance;
             GUILayout.Label($"{FormatTime(player.PlaybackTime)} / {FormatTime(player.Duration)}    •    {(player.IsPaused ? "Paused" : "Playing")}");
@@ -83,9 +64,8 @@ namespace cameraTools.Replay
                     GUILayout.Label("Game music is muted. Raise Master and Music volume in Settings.");
             }
             if (player.SceneSummary.Length > 0) GUILayout.Label(player.SceneSummary);
-            GUILayout.Label("Left-click: aim lock • Secondary attack: attach\nCtrl+F1: cursor • Drag title: move panel");
+            GUILayout.Label("Left-click: aim lock • Secondary attack: attach");
             if (_message.Length > 0) GUILayout.Label(_message);
-            GUI.DragWindow(new Rect(0, 0, _windowRect.width, 40));
         }
 
         private void ViewButton(ReplayCameraRig rig, string label, string view)

@@ -194,7 +194,7 @@ namespace cameraTools.Replay
     {
         // Run vanilla movement after replay transforms are updated, not one frame earlier.
         private static bool Prefix() => ReplayPlayer.IsPlaying ? ReplayCameraRig.Updating :
-            !(CameraPanelStyle.CameraVisible && Cursor.lockState != CursorLockMode.Locked) && !CameraPanelStyle.PointerBlocked;
+            !(CameraToolsPanel.Visible && Cursor.lockState != CursorLockMode.Locked) && !CameraPanelStyle.PointerBlocked;
 
         private static bool ButtonDown(string name)
         {

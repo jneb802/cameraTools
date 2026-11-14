@@ -45,7 +45,10 @@ namespace cameraTools.Replay
                         case "pause": player.SetPaused(true); break;
                         case "play": player.SetPaused(false); break;
                         case "detach": player.Detach(); break;
-                        case "ui": ReplayTimelinePanel.Visible = !ReplayTimelinePanel.Visible; break;
+                        case "ui":
+                            CameraToolsPanel.Visible = !CameraToolsPanel.Visible;
+                            if (CameraToolsPanel.Visible) CameraToolsPanel.Tab = CameraToolsPanel.PanelTab.Replay;
+                            break;
                         case "seek": player.Seek(Number(args[2])); break;
                         case "speed": player.SetSpeed(Number(args[2])); break;
                         case "follow":

@@ -4,7 +4,9 @@ Valheim client-side camera helpers for build recording, screenshots, and replay 
 
 ## Panel
 
-Press `F6` to open the camera tools panel. The panel can:
+Press `F6` to show or hide the Camera Tools window. It has two tabs, and `F6` hides the whole window at once without changing the camera, the playback or any setting in it.
+
+While a replay plays, the window opens on its **Replay** tab: play, pause, timeline, speed, target and camera views, music, and Exit. The **Camera** tab can:
 
 - Toggle freefly.
 - Toggle HUD visibility.
@@ -85,7 +87,7 @@ A recording holds:
 
 ### Watching a recording
 
-Open **Replays** on the main menu, pick a recording and press **Watch**. The game opens it on its own: no character, no original world and no travel. It starts paused at the first frame from the recorded camera. The panel (Ctrl+F1 for the cursor) plays, pauses, scrubs and changes speed, and the camera can fly freely, lock its aim on a target, attach to it, or follow the **Recorded camera**. **Back to menu** closes it.
+Open **Replays** on the main menu, pick a recording and press **Watch**. The game opens it on its own: no character, no original world and no travel. It starts paused at the first frame from the recorded camera. The Replay tab of the Camera Tools window (Ctrl+F1 for the cursor, `F6` to hide it for a clean view) plays, pauses, scrubs and changes speed, and the camera can fly freely, lock its aim on a target, attach to it, or follow the **Recorded camera**. **Back to menu** closes it.
 
 The replay session is a temporary world that nothing can change or save:
 

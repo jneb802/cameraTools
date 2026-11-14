@@ -7,17 +7,15 @@ namespace cameraTools
     {
         private static GUISkin? _skin;
         private static readonly List<Texture2D> Textures = new();
-        public static Rect CameraRect;
-        public static Rect ReplayRect;
-        public static bool CameraVisible;
+        /// <summary>Where the cameraTools window was last drawn.</summary>
+        public static Rect PanelRect;
         public static bool PointerBlocked
         {
             get
             {
                 if (Cursor.lockState == CursorLockMode.Locked) return false;
                 Vector2 pointer = new(Input.mousePosition.x, Screen.height - Input.mousePosition.y);
-                return GUIUtility.hotControl != 0 || (CameraVisible && CameraRect.Contains(pointer)) ||
-                    (Replay.ReplayPlayer.IsPlaying && Replay.ReplayTimelinePanel.Visible && ReplayRect.Contains(pointer));
+                return GUIUtility.hotControl != 0 || (CameraToolsPanel.Visible && PanelRect.Contains(pointer));
             }
         }
 
