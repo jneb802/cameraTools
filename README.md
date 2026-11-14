@@ -187,12 +187,14 @@ Every recording carries timestamped tags an agent can read without screenshots. 
 |---|---|
 | `death` | The actor died: the recording game ran its death, or its synced health reached zero. One per actor. |
 | `attack_start` | The actor started an attack: the game triggered a weapon or creature attack animation. A combo has one per swing. |
-| `damage_taken` | The actor's synced health dropped between two samples (30 per second). `amount` is the drop and `health` what remains. |
+| `damage_taken` | The actor's synced health dropped between two samples (30 per second), or it died with health left at its last sample (the killing blow). `amount` is the drop and `health` what remains. |
 
 Each tag names the actor as `user:id` (the id `ct_replay targets` and `ct_replay view` use), its prefab and a readable name.
 
 - `ct_replay events [death|attack|damage] [user:id]` lists the tags of the playing replay.
 - Saving a take also writes `<name>.events.json` next to it. `replay events <name>` writes that file for any recording, including older ones; it reads the file in the background, so repeat it until it reports `OK`.
+
+A character another player's game simulates reaches this game only as synced data. Its death and killing blow are tagged when its health reaching zero arrives; when that game removes the character before the update arrives, both are missing rather than guessed.
 
 Older recordings stay readable. Files before version 9 have no health samples, so `damage_taken` is reported unavailable with the reason; their attacks are read from the saved animation triggers, and their deaths include only characters the recording game simulated. Files before version 6 have no deaths.
 

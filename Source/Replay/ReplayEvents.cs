@@ -254,7 +254,7 @@ namespace cameraTools.Replay
                 {
                     ["death"] = "The actor died: the game ran its death (the recording game simulated the actor), or its synced health reached zero. One per actor.",
                     ["attack_start"] = "The actor started an attack: the game triggered a weapon or creature attack animation. A combo has one per swing.",
-                    ["damage_taken"] = "The actor's synced health dropped between two recorded samples (30 per second). amount is the drop; health is what remains."
+                    ["damage_taken"] = "The actor's synced health dropped between two recorded samples (30 per second), or the actor died with health left at its last sample (the killing blow). amount is the drop; health is what remains."
                 },
                 ["types"] = types,
                 ["events"] = events
@@ -298,6 +298,13 @@ namespace cameraTools.Replay
         {
             if (!_dead.Add((user, id))) return;
             _file.Deaths.Add(new DeathEvent { Time = time, User = user, Id = id, Name = name });
+            // A character without a death animation is removed in the frame it dies, before the next health
+            // sample, so its killing blow is the health it had at its last sample.
+            if (_health.TryGetValue((user, id), out float previous) && previous > 0f)
+            {
+                _file.Damage.Add(new DamageEvent { Time = time, User = user, Id = id, Amount = previous, Health = 0f });
+                _health[(user, id)] = 0f;
+            }
         }
 
         internal void Trigger(float time, ZDOID id, string trigger)
