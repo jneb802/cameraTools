@@ -24,6 +24,7 @@ namespace cameraTools
         private readonly Harmony HarmonyInstance = new(ModGUID);
 
         public static readonly ManualLogSource TemplateLogger = BepInEx.Logging.Logger.CreateLogSource(ModName);
+        internal static cameraToolsPlugin Instance = null!;
 
         public static ConfigEntry<KeyboardShortcut> PanelToggleKey = null!;
         public static ConfigEntry<float> DefaultSmoothness = null!;
@@ -31,6 +32,7 @@ namespace cameraTools
 
         public void Awake()
         {
+            Instance = this;
             PanelToggleKey = Config.Bind("UI", "PanelToggleKey", new KeyboardShortcut(KeyCode.F6),
                 "Hotkey to toggle the camera tools panel");
             DefaultSmoothness = Config.Bind("Camera", "DefaultSmoothness", 0.5f,
@@ -57,6 +59,7 @@ namespace cameraTools
             gameObject.AddComponent<PathPlayer>();
             CreativeZoneCameraController.RegisterCommands();
             ReplayCommands.Register();
+            AgentCommands.Register();
             MarkerCommands.Register();
         }
 
