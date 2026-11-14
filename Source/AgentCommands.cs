@@ -47,7 +47,20 @@ namespace cameraTools
             "replay events <file> - writes <file>.events.json next to the recording (ACCEPTED; repeat until OK). New takes write it when they save.",
             "ct_replay recorded [on|off|status] - follow the camera used while recording. ct_replay follow <user:id> <x> <y> <z> [local] - fixed offset.",
             "ct_replay music [index] | volume <0-1> - replay music. ct_replay ui [show|hide|toggle|status] - the window on its Replay tab.",
-            "ct_replay media - recorded effects, sounds and deaths. ct_replay exit - leave the replay (session: ACCEPTED, poll state until menu)."
+            "ct_replay media - recorded effects, sounds and deaths. ct_replay exit - leave the replay (session: ACCEPTED, poll state until menu).",
+            "ct_replay where <user:id> - the actor's recorded position, facing and health now. ct_replay digest [rate] - writes <file>.digest.json (ACCEPTED; repeat until OK).",
+            "replay digest <file> [rate] - the same from the main menu (sizes and sun need a session). replay downsample <file> <new name> - test copy with every other frame.",
+            "record start [name] --rate 60 - record at 60 samples a second (setting Recording.SampleRate sets the default).",
+            "ct_replay tag [label] | tags | untag <id> - highlights of the playing replay (H while watching), saved in <file>.highlights.json.",
+            "ct_grid <on|off|status> [spacing] | ct_grid cell <name> | ct_grid probe <x> <z> - ground grid with 5 m cells named A1.. (letters west to east, numbers south to north); probe prints surface and terrain heights.",
+            "ct_trails <on|off|status> [user:id ...] - actor paths with a tick every second, deaths and hits. ct_screenshot [file] --overlays keeps them in a screenshot.",
+            "ct_replay map [time|from-to] [sizeMeters] [pixels] - overhead PNG of the fight with a pixel-to-world JSON. ct_replay scene-export [margin] - <file>.scene.json heights and obstacles.",
+            "ct_fov [degrees|reset] - field of view.",
+            "ct_shot play <file> [from] | stop | status - play a shot file (BepInEx/config/cameraTools/shots) in step with the replay clock.",
+            "ct_shot check <file> [aspect] - report blocked views, camera under ground or inside objects, actors leaving the frame, camera too close.",
+            "ct_shot preview <file> [times...|count N] [--overlays] - stills at replay times (ACCEPTED; poll ct_shot status until mode=idle).",
+            "ct_shot render <file> [--fps N] [--size WxH] [--supersample N] [--video] [--keep-frames] [--no-audio] [--fps-cap N] | render-all <folder> | render status | render cancel - frame-by-frame render.",
+            "ct_shot new <name> | key [time] | save [name] - build a shot by hand from the free camera."
         };
 
         internal static void Register()

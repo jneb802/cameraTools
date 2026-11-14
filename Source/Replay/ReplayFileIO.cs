@@ -143,6 +143,7 @@ namespace cameraTools.Replay
             ReplayMediaIO.Write(w, replay, paths);
             SceneIO.Write(w, replay);
             ReplayEventIO.Write(w, replay);
+            CombatData.Write(w, replay);
         }
 
         public static ReplayFile Read(string path)
@@ -158,6 +159,7 @@ namespace cameraTools.Replay
                 ReplayFile old = new ReplayFile { FileVersion = legacyVersion, Info = { Name = Path.GetFileNameWithoutExtension(path) } };
                 ReadBody(legacyReader, legacyVersion, old);
                 old.Info.Duration = old.Duration;
+                old.SourcePath = path;
                 return old;
             }
             ReplayFile replay = new ReplayFile();
@@ -166,6 +168,7 @@ namespace cameraTools.Replay
             using GZipStream compressed = new GZipStream(stream, CompressionMode.Decompress);
             using BinaryReader reader = new BinaryReader(compressed, Encoding.UTF8);
             ReadBody(reader, version, replay);
+            replay.SourcePath = path;
             return replay;
         }
 
@@ -338,6 +341,7 @@ namespace cameraTools.Replay
             if (version >= 6) ReplayMediaIO.Read(r, replay, paths);
             if (version >= 7) SceneIO.Read(r, replay);
             if (version >= 9) ReplayEventIO.Read(r, replay);
+            if (version >= 10) CombatData.Read(r, replay);
         }
 
         public static string GetReplayDirectory()
