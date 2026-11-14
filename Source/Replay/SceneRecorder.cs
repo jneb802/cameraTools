@@ -112,8 +112,16 @@ namespace cameraTools.Replay
                     KeyValuePair<Vector2s, ZoneSystem.ZoneData> zone = _pendingTerrain[_terrainCursor++];
                     CaptureTerrain(zone.Key, zone.Value, ref bytes);
                 }
-                else if (_nearCursor < _near.Count) Observe(_near[_nearCursor++], _scanTime, true, ref bytes);
-                else if (_distantCursor < _distant.Count) Observe(_distant[_distantCursor++], _scanTime, false, ref bytes);
+                else if (_nearCursor < _near.Count)
+                {
+                    ZDO zdo = _near[_nearCursor++];
+                    if (zdo != null) Observe(zdo, _scanTime, true, ref bytes);
+                }
+                else if (_distantCursor < _distant.Count)
+                {
+                    ZDO zdo = _distant[_distantCursor++];
+                    if (zdo != null) Observe(zdo, _scanTime, false, ref bytes);
+                }
                 else _pendingScan = false;
             }
         }
