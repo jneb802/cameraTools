@@ -72,9 +72,12 @@ namespace cameraTools.Replay
         internal VisualPlayer(GameObject root) { _root = root; }
         private Transform? Find(string path)
         {
-            if (!_transforms.TryGetValue(path, out Transform? result))
+            if (_root == null) return null;
+            // Equipment mods can replace children after creation or after a seek. Unity's destroyed
+            // objects still have managed references, so test Unity equality before reusing the cache.
+            if (!_transforms.TryGetValue(path, out Transform? result) || result == null)
             { result = ReplayVisuals.Find(_root.transform, path); if (result != null) _transforms[path] = result; }
-            return result;
+            return result != null ? result : null;
         }
 
         private void Activate(Transform node)
@@ -88,6 +91,7 @@ namespace cameraTools.Replay
 
         internal void Apply(VisualState first, VisualState second, float fraction)
         {
+            if (_root == null) return;
             _root.transform.localScale = Vector3.Lerp(first.Scale, second.Scale, fraction);
             for (int i = 0; i < first.Nodes.Count; i++)
             {
