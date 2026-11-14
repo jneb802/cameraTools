@@ -2,40 +2,14 @@ using UnityEngine;
 
 namespace cameraTools.Replay
 {
-    public class ReplayTimelinePanel : MonoBehaviour
+    /// <summary>The Replay tab of the cameraTools window. Its state lives here, so hiding the window keeps it.</summary>
+    internal sealed class ReplayControls
     {
-        public static bool Visible = true;
-        private Rect _windowRect;
-        private const int WindowId = 98235;
         private readonly PanelDropdown _music = new();
         private readonly PanelDropdown _targets = new();
         private string _message = "";
 
-        private const float Width = 460f;
-
-        private void Start()
-        {
-            Vector2 screen = CameraPanelStyle.ReferenceScreen;
-            _windowRect = new Rect((screen.x - Width) / 2f, screen.y - 340f, Width, 0f);
-        }
-
-        private void OnGUI()
-        {
-            if (!ReplayPlayer.IsPlaying || !Visible) return;
-            GUISkin previous = GUI.skin;
-            GUI.skin = CameraPanelStyle.Skin;
-            Matrix4x4 matrix = CameraPanelStyle.BeginScaled();
-            try
-            {
-                _windowRect.height = 0;
-                _windowRect = GUILayout.Window(WindowId, _windowRect, DrawWindow, "Combat Replay", GUILayout.Width(Width));
-                _windowRect = CameraPanelStyle.Clamp(_windowRect);
-                CameraPanelStyle.ReplayRect = CameraPanelStyle.ToScreen(_windowRect);
-            }
-            finally { GUI.matrix = matrix; GUI.skin = previous; }
-        }
-
-        private void DrawWindow(int id)
+        internal void Draw()
         {
             ReplayPlayer player = ReplayPlayer.Instance;
             GUILayout.BeginHorizontal();
@@ -89,9 +63,8 @@ namespace cameraTools.Replay
                     GUILayout.Label("Game music is muted. Raise Master and Music volume in Settings.");
             }
             if (player.SceneSummary.Length > 0) GUILayout.Label(player.SceneSummary);
-            GUILayout.Label("Left-click: aim lock • Secondary attack: attach • Ctrl+F1: cursor");
+            GUILayout.Label("Left-click: aim lock • Secondary attack: attach");
             if (_message.Length > 0) GUILayout.Label(_message);
-            GUI.DragWindow(new Rect(0, 0, _windowRect.width, 32));
         }
 
         private void ViewButton(ReplayCameraRig rig, string label, string view)

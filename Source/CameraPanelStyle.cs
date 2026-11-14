@@ -7,9 +7,8 @@ namespace cameraTools
     {
         private static GUISkin? _skin;
         private static readonly List<Texture2D> Textures = new();
-        /// <summary>Window areas in screen pixels, for pointer blocking.</summary>
-        public static Rect CameraRect;
-        public static Rect ReplayRect;
+        /// <summary>Where the cameraTools window was last drawn, in screen pixels, for pointer blocking.</summary>
+        public static Rect PanelRect;
 
         /// <summary>
         /// Valheim's own menu scale: 1 at 1920x1080 with the game's UI scale at 100%, 1.33 at 2560x1440.
@@ -35,15 +34,13 @@ namespace cameraTools
             float scale = Scale;
             return new Rect(rect.x * scale, rect.y * scale, rect.width * scale, rect.height * scale);
         }
-        public static bool CameraVisible;
         public static bool PointerBlocked
         {
             get
             {
                 if (Cursor.lockState == CursorLockMode.Locked) return false;
                 Vector2 pointer = new(Input.mousePosition.x, Screen.height - Input.mousePosition.y);
-                return GUIUtility.hotControl != 0 || (CameraVisible && CameraRect.Contains(pointer)) ||
-                    (Replay.ReplayPlayer.IsPlaying && Replay.ReplayTimelinePanel.Visible && ReplayRect.Contains(pointer));
+                return GUIUtility.hotControl != 0 || (CameraToolsPanel.Visible && PanelRect.Contains(pointer));
             }
         }
 

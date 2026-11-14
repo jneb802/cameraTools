@@ -4,7 +4,9 @@ Valheim client-side camera helpers for build recording, screenshots, and replay 
 
 ## Panel
 
-Press `F6` to open the camera tools panel. The cameraTools windows are drawn at Valheim's own menu scale (screen size and the game's UI scale setting), with text and controls sized like the inventory and crafting menus, so they keep the same size relative to the game at every resolution. The panel can:
+Press `F6` to show or hide the Camera Tools window. It has two tabs, and `F6` hides the whole window at once without changing the camera, the playback or any setting in it. The window is drawn at Valheim's own menu scale (screen size and the game's UI scale setting), with text and controls sized like the inventory and crafting menus, so it keeps the same size relative to the game at every resolution.
+
+While a replay plays, the window opens on its **Replay** tab: play, pause, timeline, speed, target and camera views, music, and Exit. The **Camera** tab can:
 
 - Toggle freefly.
 - Toggle HUD visibility.
@@ -16,23 +18,101 @@ Press `F6` to open the camera tools panel. The cameraTools windows are drawn at 
 
 ## CLI Commands
 
-These commands are regular Valheim terminal commands, so they can be run through `valheimCLI`.
+These commands are regular Valheim terminal commands, so they can be run through `valheimCLI`. `ct_help` prints the full reference in game.
 
 ```text
+ct_help
+ct_ui <show|hide|toggle|status> [camera|replay]
 ct_freefly <on|off|toggle|status>
 ct_hud <show|hide|toggle|status>
+ct_follow <on|off|toggle|status>
+ct_smooth [0-1]
+ct_frame <on|off|toggle|status>
 ct_prepare [x y z]
 ct_status [x y z]
 ct_place <cameraX cameraY cameraZ> <lookX lookY lookZ>
 ct_move <start|stop|status> [duration] [startX startY startZ endX endY endZ] [lookX lookY lookZ] [linear|ease|in|out]
 ct_orbit <start|stop|status> [duration] [degrees] [x y z]
 ct_screenshot [filename]
+ct_settings list | get <Section.Key> | set <Section.Key> <value>
 ct_mark <tool|pick <mark>|list [kind|all]|build [list|new <name>|use <id|name>]|return|show|hide|auto|export|reload|clear [kind]|remove <id|label>|goto <id|label>|shot <label>|point <label> [x y z]>
 ct_path <list|play <id|label> [duration] [waypoints|forward|look x y z]|stop|status|preview <id|label>>
-record [name] | record stop | record status
-replay <name> | replay list | replay exit
-ct_replay status|media|targets|pause|play|seek <seconds>|speed <0.1-4>|detach|recorded|follow <user:id> <x> <y> <z> [local]|view <user:id> <aim|attach|front|third|projectile>|music [index]|ui|exit
+record [name] | record start [name] | record stop | record status
+replay <file> | replay list | replay info <file> | replay folder | replay browser <open|close|status> | replay exit
+ct_replay state|status|media|targets|target [user:id]|find [user:id]|view [user:id] <aim|attach|front|third|projectile>|detach|recorded [on|off|status]|follow <user:id> <x> <y> <z> [local]|pause|play|seek <seconds>|speed <0.1-4>|music [index]|volume <0-1>|ui [show|hide|toggle|status]|exit
 ```
+
+### Replies
+
+Every reply starts with a word an agent can check:
+
+| Reply | Meaning |
+|---|---|
+| `OK:` | Done. The rest of the line is the resulting state as `key=value` pairs. |
+| `ACCEPTED:` | Started and still running (saving a take, opening or leaving a session). The reply names the command to poll. |
+| `PENDING:` | Still running. |
+| `ERROR: invalid-argument:` | The input was wrong. Nothing changed. |
+| `ERROR: unavailable:` | Not possible in the current game state, for example `ct_replay seek` with no replay playing. Nothing changed. |
+
+Setters such as `ct_ui hide`, `ct_frame on` or `ct_replay recorded off` set a known state, so repeating them changes nothing. `toggle` inverts.
+
+### Driving a replay from the console
+
+```text
+record start fight1          # in a world
+record stop                  # ACCEPTED; poll until state=idle
+record status
+replay list                  # from the main menu
+replay info fight1
+replay fight1                # ACCEPTED; poll until state=session
+ct_replay state
+ct_replay targets
+ct_replay view 123:456 third
+ct_replay seek 12.5
+ct_replay play
+ct_ui hide
+ct_replay status
+ct_replay exit               # ACCEPTED; poll until state=menu
+```
+
+### Panel controls and their commands
+
+| Panel | Control | Command |
+|---|---|---|
+| Window | F6 show/hide | `ct_ui show\|hide\|toggle` |
+| Window | Camera and Replay tabs | `ct_ui show camera`, `ct_ui show replay` |
+| Camera | Free Fly | `ct_freefly on\|off` |
+| Camera | Show HUD | `ct_hud show\|hide` |
+| Camera | Player Follows Camera | `ct_follow on\|off` |
+| Camera | Smoothness slider, value field and Apply | `ct_smooth <0-1>` |
+| Camera | Show 9:16 Frame | `ct_frame on\|off` |
+| Camera | Status text | `ct_status [x y z]` |
+| Camera | Prepare | `ct_prepare` |
+| Camera | Orbit 360 / Stop Orbit | `ct_orbit start 20 360` / `ct_orbit stop` |
+| Camera | Screenshot | `ct_screenshot [filename]` |
+| Replay | Show the window on the Replay tab | `ct_replay ui show` |
+| Replay | Time, duration, Playing/Paused | `ct_replay status` |
+| Replay | Timeline slider | `ct_replay seek <seconds>` |
+| Replay | Play / Pause | `ct_replay play`, `ct_replay pause` |
+| Replay | Speed − / + | `ct_replay speed <0.1-4>` |
+| Replay | Exit replay / Back to menu | `ct_replay exit` or `replay exit` |
+| Replay | Target dropdown | `ct_replay targets`, `ct_replay target <user:id>` |
+| Replay | Aim at, Attach here, Third person, Front, Projectile | `ct_replay view [user:id] <aim\|attach\|third\|front\|projectile>` |
+| Replay | Find target | `ct_replay find [user:id]` |
+| Replay | Detach | `ct_replay detach` |
+| Replay | Recorded camera | `ct_replay recorded on\|off` |
+| Replay | Camera status text | `ct_replay status` (`camera=`) |
+| Replay | Music dropdown | `ct_replay music [index]` |
+| Replay | Music volume slider | `ct_replay volume <0-1>` |
+| Replay | Scene summary text | `ct_replay status` (`scene=`) |
+| Replays window | Open from the main menu / Close | `replay browser open\|close` |
+| Replays window | Recording list, Refresh | `replay list` |
+| Replays window | Details of the selected recording | `replay info <file>` |
+| Replays window | Watch | `replay <file>` |
+| Replays window | Open folder | `replay folder` |
+| Config file | Every setting | `ct_settings list\|get\|set` |
+
+The mouse shortcuts of the replay camera (left-click aim lock, secondary attack to attach) pick the target under the crosshair; `ct_replay view <user:id> aim|attach` selects it by id instead.
 
 ## Markers
 
@@ -85,7 +165,7 @@ A recording holds:
 
 ### Watching a recording
 
-Open **Replays** on the main menu, pick a recording and press **Watch**. The game opens it on its own: no character, no original world and no travel. It starts paused at the first frame from the recorded camera. The panel (Ctrl+F1 for the cursor) plays, pauses, scrubs and changes speed, and the camera can fly freely, lock its aim on a target, attach to it, or follow the **Recorded camera**. **Back to menu** closes it.
+Open **Replays** on the main menu, pick a recording and press **Watch**. The game opens it on its own: no character, no original world and no travel. It starts paused at the first frame from the recorded camera. The Replay tab of the Camera Tools window (Ctrl+F1 for the cursor, `F6` to hide it for a clean view) plays, pauses, scrubs and changes speed, and the camera can fly freely, lock its aim on a target, attach to it, or follow the **Recorded camera**. **Back to menu** closes it.
 
 The replay session is a temporary world that nothing can change or save:
 
