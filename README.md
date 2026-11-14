@@ -179,6 +179,23 @@ The browser lists the mods the recording used. Objects, creatures and effects fr
 
 Only what your game had loaded is in a recording; beyond about 150 m to 300 m, depending on your view settings, you see bare terrain. Recordings made before cameraTools saved surroundings play with `replay <name>` inside their own world, laid over the loaded world.
 
+### Event tags
+
+Every recording carries timestamped tags an agent can read without screenshots. Times are seconds from the start of the replay, the clock `ct_replay seek` uses; a tag is within 0.25 s of the moment it shows in playback.
+
+| Type | Meaning |
+|---|---|
+| `death` | The actor died: the recording game ran its death, or its synced health reached zero. One per actor. |
+| `attack_start` | The actor started an attack: the game triggered a weapon or creature attack animation. A combo has one per swing. |
+| `damage_taken` | The actor's synced health dropped between two samples (30 per second). `amount` is the drop and `health` what remains. |
+
+Each tag names the actor as `user:id` (the id `ct_replay targets` and `ct_replay view` use), its prefab and a readable name.
+
+- `ct_replay events [death|attack|damage] [user:id]` lists the tags of the playing replay.
+- Saving a take also writes `<name>.events.json` next to it. `replay events <name>` writes that file for any recording, including older ones; it reads the file in the background, so repeat it until it reports `OK`.
+
+Older recordings stay readable. Files before version 9 have no health samples, so `damage_taken` is reported unavailable with the reason; their attacks are read from the saved animation triggers, and their deaths include only characters the recording game simulated. Files before version 6 have no deaths.
+
 ## Build
 
 ```bash
