@@ -14,7 +14,8 @@ namespace cameraTools
         public static bool Visible;
         public static PanelTab Tab = PanelTab.Camera;
         private static bool _visibleBeforeReplay;
-        private bool _showFrameGuide;
+        /// <summary>Draws the 9:16 crop lines; set by the Camera tab toggle and ct_frame.</summary>
+        public static bool FrameGuide;
         private Rect _windowRect;
         private string _smoothnessText = "0.5";
         private const int WindowId = 98234;
@@ -59,7 +60,7 @@ namespace cameraTools
 
         private void OnGUI()
         {
-            if (_showFrameGuide && _lineTexture != null)
+            if (FrameGuide && _lineTexture != null)
             {
                 float cropWidth = Screen.height * (9f / 16f);
                 float leftX = (Screen.width - cropWidth) / 2f;
@@ -164,7 +165,7 @@ namespace cameraTools
             GUILayout.EndHorizontal();
 
             GUILayout.Space(8f);
-            _showFrameGuide = GUILayout.Toggle(_showFrameGuide, "Show 9:16 Frame");
+            FrameGuide = GUILayout.Toggle(FrameGuide, "Show 9:16 Frame");
 
             GUILayout.Space(8f);
             GUILayout.Label(CreativeZoneCameraController.BuildStatus(Vector3.zero));
