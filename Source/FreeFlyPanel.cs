@@ -4,8 +4,8 @@ namespace cameraTools
 {
     public class FreeFlyPanel : MonoBehaviour
     {
-        private bool _showPanel;
-        private bool _showFrameGuide;
+        /// <summary>Draws the 9:16 crop lines; set by the panel toggle and ct_frame.</summary>
+        public static bool FrameGuide;
         private Rect _windowRect;
         private string _smoothnessText = "0.5";
         private const int WindowId = 98234;
@@ -27,15 +27,14 @@ namespace cameraTools
         {
             if (cameraToolsPlugin.PanelToggleKey.Value.IsDown())
             {
-                _showPanel = !_showPanel;
-                CameraPanelStyle.CameraVisible = _showPanel;
-                cameraToolsPlugin.TemplateLogger.LogDebug(_showPanel ? "Camera Tools panel opened" : "Camera Tools panel closed");
+                CameraPanelStyle.CameraVisible = !CameraPanelStyle.CameraVisible;
+                cameraToolsPlugin.TemplateLogger.LogDebug(CameraPanelStyle.CameraVisible ? "Camera Tools panel opened" : "Camera Tools panel closed");
             }
         }
 
         private void OnGUI()
         {
-            if (_showFrameGuide && _lineTexture != null)
+            if (FrameGuide && _lineTexture != null)
             {
                 float cropWidth = Screen.height * (9f / 16f);
                 float leftX = (Screen.width - cropWidth) / 2f;
@@ -44,7 +43,7 @@ namespace cameraTools
                 GUI.DrawTexture(new Rect(rightX, 0, LineWidth, Screen.height), _lineTexture);
             }
 
-            if (!_showPanel || GameCamera.m_instance == null)
+            if (!CameraPanelStyle.CameraVisible || GameCamera.m_instance == null)
                 return;
 
             GUISkin previous = GUI.skin;
@@ -117,7 +116,7 @@ namespace cameraTools
             GUILayout.EndHorizontal();
 
             GUILayout.Space(8f);
-            _showFrameGuide = GUILayout.Toggle(_showFrameGuide, "Show 9:16 Frame");
+            FrameGuide = GUILayout.Toggle(FrameGuide, "Show 9:16 Frame");
 
             GUILayout.Space(8f);
             GUILayout.Label(CreativeZoneCameraController.BuildStatus(Vector3.zero));

@@ -538,7 +538,7 @@ namespace cameraTools
                 }
                 catch (Exception ex)
                 {
-                    args.Context.AddString($"ERROR: {ex.Message}");
+                    args.Context.AddString(CommandText.Error(ex));
                 }
             });
 
@@ -570,7 +570,7 @@ namespace cameraTools
                 }
                 catch (Exception ex)
                 {
-                    args.Context.AddString($"ERROR: {ex.Message}");
+                    args.Context.AddString(CommandText.Error(ex));
                 }
             });
 
@@ -582,7 +582,7 @@ namespace cameraTools
                 }
                 catch (Exception ex)
                 {
-                    args.Context.AddString($"ERROR: {ex.Message}");
+                    args.Context.AddString(CommandText.Error(ex));
                 }
             });
 
@@ -597,7 +597,7 @@ namespace cameraTools
                 }
                 catch (Exception ex)
                 {
-                    args.Context.AddString($"ERROR: {ex.Message}");
+                    args.Context.AddString(CommandText.Error(ex));
                 }
             });
 
@@ -619,7 +619,7 @@ namespace cameraTools
                 }
                 catch (Exception ex)
                 {
-                    args.Context.AddString($"ERROR: {ex.Message}");
+                    args.Context.AddString(CommandText.Error(ex));
                 }
             });
 
@@ -652,7 +652,7 @@ namespace cameraTools
                 }
                 catch (Exception ex)
                 {
-                    args.Context.AddString($"ERROR: {ex.Message}");
+                    args.Context.AddString(CommandText.Error(ex));
                 }
             });
 
@@ -681,7 +681,7 @@ namespace cameraTools
                 }
                 catch (Exception ex)
                 {
-                    args.Context.AddString($"ERROR: {ex.Message}");
+                    args.Context.AddString(CommandText.Error(ex));
                 }
             });
 
@@ -694,7 +694,7 @@ namespace cameraTools
                 }
                 catch (Exception ex)
                 {
-                    args.Context.AddString($"ERROR: {ex.Message}");
+                    args.Context.AddString(CommandText.Error(ex));
                 }
             });
         }
