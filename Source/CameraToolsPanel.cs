@@ -105,6 +105,7 @@ namespace cameraTools
 
         private static void TabButton(string label, PanelTab tab)
         {
+            // The skin's button looks the same pressed and unpressed, so the open tab is marked in its label.
             if (GUILayout.Button(Tab == tab ? "▸ " + label : label)) Tab = tab;
         }
 
