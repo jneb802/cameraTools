@@ -43,11 +43,11 @@ namespace cameraTools
             "ct_replay targets - every recorded actor as user:id kind prefab. ct_replay target [user:id] - select or report the target.",
             "ct_replay view [user:id] <aim|attach|front|third|projectile> - aim at or attach the camera to the target. ct_replay detach - free camera.",
             "ct_replay find [user:id] - pause and seek to where the target first appears.",
+            "ct_replay events [death|attack|damage] [user:id] - timestamped event tags of the playing replay.",
+            "replay events <file> - writes <file>.events.json next to the recording (ACCEPTED; repeat until OK). New takes write it when they save.",
             "ct_replay recorded [on|off|status] - follow the camera used while recording. ct_replay follow <user:id> <x> <y> <z> [local] - fixed offset.",
             "ct_replay music [index] | volume <0-1> - replay music. ct_replay ui [show|hide|toggle|status] - replay panel.",
-            "ct_replay media - recorded effects, sounds and deaths. ct_replay exit - leave the replay (session: ACCEPTED, poll state until menu).",
-            "ct_replay events [death|attack|damage] [user:id] - timestamped event tags of the playing replay.",
-            "replay events <file> - writes <file>.events.json next to the recording (ACCEPTED; repeat until OK). New takes write it when they save."
+            "ct_replay media - recorded effects, sounds and deaths. ct_replay exit - leave the replay (session: ACCEPTED, poll state until menu)."
         };
 
         internal static void Register()
