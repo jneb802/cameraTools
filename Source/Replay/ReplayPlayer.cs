@@ -276,15 +276,31 @@ namespace cameraTools.Replay
                 frameBEntities[(e.ZdoUserID, e.ZdoID)] = e;
 
             // Interpolate and update ghosts from frameA
+            _scene?.Update(_playbackTime);
             foreach (var a in frameA.Entities)
             {
                 var key = (a.ZdoUserID, a.ZdoID);
                 if (_scene != null && _scene.Contains(a.ZdoUserID, a.ZdoID))
                 {
-                    // Replayed as a real object (a dropped item in the session); only its pose comes from the frames.
+                    // Replayed as a real object; the recorded frames still control its motion.
                     if (frameBEntities.TryGetValue(key, out EntitySnapshot next))
                         _scene.Move(a.ZdoUserID, a.ZdoID, Vector3.Lerp(a.Position, next.Position, t), Quaternion.Slerp(a.Rotation, next.Rotation, t));
                     else _scene.Move(a.ZdoUserID, a.ZdoID, a.Position, a.Rotation);
+                    if (a.Kind == 0 && !a.IsProjectile)
+                    {
+                        GameObject actor = ZNetScene.instance.FindInstance(new ZDOID(a.ZdoUserID, a.ZdoID));
+                        if (actor != null)
+                        {
+                            EntitySnapshot second = frameBEntities.TryGetValue(key, out EntitySnapshot sample) ? sample : a;
+                            currentEntities.Add(key);
+                            _ghostManager.BindCharacter(a.ZdoUserID, a.ZdoID, actor);
+                            _ghostManager.UpdateGhost(a.ZdoUserID, a.ZdoID, Vector3.Lerp(a.Position, second.Position, t),
+                                Quaternion.Slerp(a.Rotation, second.Rotation, t), a.ForwardSpeed, a.SidewaySpeed, a.TurnSpeed, a.AnimBools, a.StateF, a.StateI);
+                            _ghostManager.UpdateEquipment(a.ZdoUserID, a.ZdoID, t < 0.5f ? a : second);
+                            _ghostManager.ApplyPose(a, second, t);
+                            _ghostManager.ApplyVisual(a, second, t);
+                        }
+                    }
                     continue;
                 }
                 currentEntities.Add(key);
@@ -354,7 +370,6 @@ namespace cameraTools.Replay
 
             // Update world state
             _worldStatePlayer?.UpdatePlayback(_playbackTime);
-            _scene?.Update(_playbackTime);
             _environment?.Update(_playbackTime);
             _media?.Update(_playbackTime, _paused, _playbackSpeed);
             // Hide live subjects locally while their recorded copies are being filmed.

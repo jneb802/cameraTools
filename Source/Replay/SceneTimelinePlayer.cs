@@ -118,7 +118,7 @@ namespace cameraTools.Replay
             ZDOExtraData.Release(zdo, id);
             Load(zdo, state);
             bool frequent = desired > 0 && state.Time - item.States[desired - 1].Time < FrequentChangeSeconds;
-            Refresh(zdo, seeking || !frequent);
+            Refresh(zdo, seeking || !frequent, seeking);
         }
 
         private static int StateAt(List<SceneState> states, float time)
@@ -146,9 +146,11 @@ namespace cameraTools.Replay
         // Many objects read their ZDO only when created or when the owner sends an RPC, which no
         // replay sends. Rebuild those objects so they show the new data. Objects that change often
         // (fires, smelters, terrain edits) read their ZDO continuously, so they keep their instance.
-        private static void Refresh(ZDO zdo, bool rebuild)
+        private static void Refresh(ZDO zdo, bool rebuild, bool seeking)
         {
             if (!ZNetScene.instance.m_instances.TryGetValue(zdo, out ZNetView view) || view == null) return;
+            // Movement changes character data frequently; retain its mod components during playback.
+            if (view.GetComponent<Character>() != null && !seeking) return;
             WearNTear wear = view.GetComponent<WearNTear>();
             if (wear != null) { wear.UpdateVisual(false); return; }
             if (rebuild && view.GetComponent<TerrainComp>() == null) ZNetScene.instance.Destroy(view.gameObject);
