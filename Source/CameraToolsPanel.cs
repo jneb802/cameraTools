@@ -103,7 +103,8 @@ namespace cameraTools
 
         private static void TabButton(string label, PanelTab tab)
         {
-            if (GUILayout.Toggle(Tab == tab, label, GUI.skin.button) && Tab != tab) Tab = tab;
+            // The skin's button looks the same pressed and unpressed, so the open tab is marked in its label.
+            if (GUILayout.Button(Tab == tab ? "▸ " + label : label)) Tab = tab;
         }
 
         private void DrawCamera()
