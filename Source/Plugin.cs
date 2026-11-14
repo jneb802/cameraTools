@@ -47,11 +47,10 @@ namespace cameraTools
             HarmonyInstance.PatchAll(assembly);
             SetupWatcher();
 
-            gameObject.AddComponent<FreeFlyPanel>();
+            gameObject.AddComponent<CameraToolsPanel>();
             gameObject.AddComponent<CreativeZoneCameraController>();
             gameObject.AddComponent<ReplayRecorder>();
             gameObject.AddComponent<ReplayPlayer>();
-            gameObject.AddComponent<ReplayTimelinePanel>();
             gameObject.AddComponent<ReplayBrowser>();
             gameObject.AddComponent<MarkerMode>();
             gameObject.AddComponent<MarkerRenderer>();

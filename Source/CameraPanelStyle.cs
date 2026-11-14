@@ -7,17 +7,40 @@ namespace cameraTools
     {
         private static GUISkin? _skin;
         private static readonly List<Texture2D> Textures = new();
-        public static Rect CameraRect;
-        public static Rect ReplayRect;
-        public static bool CameraVisible;
+        /// <summary>Where the cameraTools window was last drawn, in screen pixels, for pointer blocking.</summary>
+        public static Rect PanelRect;
+
+        /// <summary>
+        /// Valheim's own menu scale: 1 at 1920x1080 with the game's UI scale at 100%, 1.33 at 2560x1440.
+        /// The panels are laid out at that 1920x1080 reference and drawn through this scale, so they keep the
+        /// size of the inventory and crafting menus at every resolution and UI scale setting.
+        /// </summary>
+        public static float Scale => Mathf.Max(0.5f, Mathf.Min(Screen.width / 1920f, Screen.height / 1080f) * GuiScaler.m_largeGuiScale);
+
+        /// <summary>The screen size in reference units, the space the scaled panels are laid out in.</summary>
+        public static Vector2 ReferenceScreen => new(Screen.width / Scale, Screen.height / Scale);
+
+        /// <summary>Draws the following IMGUI calls at Valheim's menu scale; returns the matrix to restore.</summary>
+        public static Matrix4x4 BeginScaled()
+        {
+            Matrix4x4 previous = GUI.matrix;
+            float scale = Scale;
+            GUI.matrix = Matrix4x4.Scale(new Vector3(scale, scale, 1f));
+            return previous;
+        }
+
+        public static Rect ToScreen(Rect rect)
+        {
+            float scale = Scale;
+            return new Rect(rect.x * scale, rect.y * scale, rect.width * scale, rect.height * scale);
+        }
         public static bool PointerBlocked
         {
             get
             {
                 if (Cursor.lockState == CursorLockMode.Locked) return false;
                 Vector2 pointer = new(Input.mousePosition.x, Screen.height - Input.mousePosition.y);
-                return GUIUtility.hotControl != 0 || (CameraVisible && CameraRect.Contains(pointer)) ||
-                    (Replay.ReplayPlayer.IsPlaying && Replay.ReplayTimelinePanel.Visible && ReplayRect.Contains(pointer));
+                return GUIUtility.hotControl != 0 || (CameraToolsPanel.Visible && PanelRect.Contains(pointer));
             }
         }
 
@@ -33,27 +56,36 @@ namespace cameraTools
                 foreach (Font candidate in Resources.FindObjectsOfTypeAll<Font>())
                     if (candidate.name == "AveriaSerifLibre-Regular") { font = candidate; break; }
                 if (font != null) _skin.font = font;
+                // Reference sizes, measured from the crafting menu at 1920x1080 and UI scale 100%: body text 15 px,
+                // list rows about 34 px. Controls are a little tighter than the menu's rows to keep the window small.
                 foreach (GUIStyle style in new[] { _skin.label, _skin.button, _skin.toggle, _skin.textField, _skin.window, _skin.box })
-                { style.fontSize = 18; style.normal.textColor = new Color(0.94f, 0.87f, 0.72f); }
+                { style.fontSize = BodyFontSize; style.normal.textColor = new Color(0.94f, 0.87f, 0.72f); }
                 Apply(_skin.window, sprites, "woodpanel_trophys");
                 Apply(_skin.button, sprites, "button");
-                _skin.window.padding = new RectOffset(24, 24, 46, 20);
-                _skin.window.fontSize = 24;
+                _skin.window.padding = new RectOffset(14, 14, 32, 10);
+                _skin.window.fontSize = 18;
                 _skin.window.normal.textColor = new Color(1f, 0.75f, 0.25f);
                 _skin.window.onNormal.textColor = _skin.window.normal.textColor;
                 _skin.window.font = font;
                 _skin.button.hover.textColor = new Color(1f, 0.8f, 0.35f);
                 _skin.button.active.textColor = Color.white;
-                _skin.button.fixedHeight = 34;
-                _skin.button.margin = new RectOffset(3, 3, 4, 4);
+                _skin.button.fixedHeight = 27;
+                _skin.button.margin = new RectOffset(2, 2, 2, 2);
+                _skin.button.padding = new RectOffset(6, 6, 2, 2);
                 _skin.label.wordWrap = true;
-                _skin.label.padding = new RectOffset(2, 2, 4, 4);
-                _skin.toggle.fixedHeight = 30;
-                _skin.textField.fixedHeight = 32;
-                _skin.horizontalSlider.margin = new RectOffset(5, 5, 12, 12);
+                _skin.label.padding = new RectOffset(2, 2, 2, 2);
+                _skin.label.margin = new RectOffset(2, 2, 2, 2);
+                _skin.textField.fixedHeight = 25;
+                _skin.horizontalSlider.margin = new RectOffset(4, 4, 9, 9);
                 return _skin;
             }
         }
+
+        public const int BodyFontSize = 15;
+
+        /// <summary>A button that shows its on state with a tick, readable where the small IMGUI check box is not.</summary>
+        public static bool ToggleButton(bool value, string label, params GUILayoutOption[] options) =>
+            GUILayout.Button(value ? label + " ✓" : label, options) ? !value : value;
 
         private static void Apply(GUIStyle style, Dictionary<string, Sprite> sprites, string name)
         {
@@ -91,10 +123,12 @@ namespace cameraTools
             finally { RenderTexture.active = previous; RenderTexture.ReleaseTemporary(temporary); }
         }
 
+        /// <summary>Keeps a window, in reference units, on the screen.</summary>
         public static Rect Clamp(Rect rect)
         {
-            rect.x = Mathf.Clamp(rect.x, 0, Mathf.Max(0, Screen.width - rect.width));
-            rect.y = Mathf.Clamp(rect.y, 0, Mathf.Max(0, Screen.height - rect.height));
+            Vector2 screen = ReferenceScreen;
+            rect.x = Mathf.Clamp(rect.x, 0, Mathf.Max(0, screen.x - rect.width));
+            rect.y = Mathf.Clamp(rect.y, 0, Mathf.Max(0, screen.y - rect.height));
             return rect;
         }
 
@@ -113,11 +147,11 @@ namespace cameraTools
         private Vector2 _scroll;
         public int Draw(string label, IReadOnlyList<string> options, int selected)
         {
-            if (options.Count == 0) { GUILayout.Label(label + ": No targets"); return selected; }
+            if (options.Count == 0) { GUILayout.Label(label + ": none"); return selected; }
             selected = Mathf.Clamp(selected, 0, options.Count - 1);
             if (GUILayout.Button(label + ": " + options[selected] + (_open ? "  ▲" : "  ▼"))) _open = !_open;
             if (!_open) return selected;
-            _scroll = GUILayout.BeginScrollView(_scroll, GUILayout.Height(145));
+            _scroll = GUILayout.BeginScrollView(_scroll, GUILayout.Height(120));
             for (int index = 0; index < options.Count; index++)
                 if (GUILayout.Button(options[index])) { selected = index; _open = false; }
             GUILayout.EndScrollView();

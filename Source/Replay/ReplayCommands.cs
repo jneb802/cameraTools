@@ -71,9 +71,10 @@ namespace cameraTools.Replay
                             args.Context.AddString($"OK: volume={player.Music.Volume:F2}");
                             return;
                         case "ui":
-                            if (args.Length > 2 && args[2].ToLowerInvariant() != "status") ReplayTimelinePanel.Visible = CommandText.Switch(args[2], ReplayTimelinePanel.Visible);
-                            else if (args.Length <= 2) ReplayTimelinePanel.Visible = !ReplayTimelinePanel.Visible;
-                            args.Context.AddString($"OK: replayPanel={ReplayTimelinePanel.Visible}");
+                            if (args.Length <= 2) CameraToolsPanel.Visible = !CameraToolsPanel.Visible;
+                            else if (args[2].ToLowerInvariant() != "status") CameraToolsPanel.Visible = CommandText.Switch(args[2], CameraToolsPanel.Visible);
+                            if (args.Length <= 2 || args[2].ToLowerInvariant() != "status") CameraToolsPanel.Tab = CameraToolsPanel.PanelTab.Replay;
+                            args.Context.AddString($"OK: panel={CameraToolsPanel.Visible} tab={CameraToolsPanel.Tab.ToString().ToLowerInvariant()}");
                             return;
                         case "targets": args.Context.AddString("OK: " + player.Targets()); return;
                         case "media":
@@ -118,7 +119,7 @@ namespace cameraTools.Replay
         private static string Status(ReplayPlayer player) =>
             $"time={player.PlaybackTime:F3} duration={player.Duration:F3} paused={player.IsPaused} speed={player.PlaybackSpeed:F2} session={player.Isolated} " +
             $"recordedCamera={player.FollowingRecordedCamera} target={player.CameraRig?.SelectedActor} camera=\"{player.CameraRig?.Status}\" " +
-            $"music={player.Music?.Selected} volume={player.Music?.Volume:F2} replayPanel={ReplayTimelinePanel.Visible} scene=\"{player.SceneSummary.Replace('\n', ' ')}\"";
+            $"music={player.Music?.Selected} volume={player.Music?.Volume:F2} panel={CameraToolsPanel.Visible} tab={CameraToolsPanel.Tab.ToString().ToLowerInvariant()} scene=\"{player.SceneSummary.Replace('\n', ' ')}\"";
 
         private static void Select(ReplayCameraRig rig, string actor)
         {
