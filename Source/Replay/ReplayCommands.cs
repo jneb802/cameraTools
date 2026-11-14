@@ -3,15 +3,17 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
+using Newtonsoft.Json.Linq;
 using UnityEngine;
 
 namespace cameraTools.Replay
 {
     public static class ReplayCommands
     {
-        internal const string ReplayUsage = "ct_replay state|status|media|targets|target [user:id]|find [user:id]|view [user:id] <aim|attach|front|third|projectile>|detach|recorded [on|off|status]|follow <user:id> <x> <y> <z> [local]|pause|play|seek <seconds>|speed <0.1-4>|music [index]|volume <0-1>|ui [show|hide|toggle|status]|exit";
+        internal const string ReplayUsage = "ct_replay state|status|media|targets|events [death|attack|damage] [user:id]|target [user:id]|find [user:id]|view [user:id] <aim|attach|front|third|projectile>|detach|recorded [on|off|status]|follow <user:id> <x> <y> <z> [local]|pause|play|seek <seconds>|speed <0.1-4>|music [index]|volume <0-1>|ui [show|hide|toggle|status]|exit";
         internal const string RecordUsage = "record [name] | record start [name] | record stop | record status";
-        internal const string FileUsage = "replay <file> | replay list | replay info <file> | replay folder | replay browser <open|close|status> | replay exit";
+        internal const string FileUsage = "replay <file> | replay list | replay info <file> | replay events <file> | replay folder | replay browser <open|close|status> | replay exit";
 
         public static void Register()
         {
@@ -77,6 +79,9 @@ namespace cameraTools.Replay
                             args.Context.AddString($"OK: panel={CameraToolsPanel.Visible} tab={CameraToolsPanel.Tab.ToString().ToLowerInvariant()}");
                             return;
                         case "targets": args.Context.AddString("OK: " + player.Targets()); return;
+                        case "events":
+                            foreach (string line in EventLines(player.Events, args)) args.Context.AddString(line);
+                            return;
                         case "media":
                             foreach (string line in player.Media().Split('\n')) args.Context.AddString(line);
                             args.Context.AddString("OK: media");
@@ -100,7 +105,7 @@ namespace cameraTools.Replay
             new Terminal.ConsoleCommand("record", "Recording: " + RecordUsage, RunRecord, optionsFetcher: () => new List<string> { "start", "stop", "status" });
             new Terminal.ConsoleCommand(
                 "replay",
-                "Replay: replay <file> (from the main menu: opens it on its own; in a world: plays it over the world) | replay list | replay info <file> | replay folder | replay browser <open|close|status> | replay exit",
+                "Replay: replay <file> (from the main menu: opens it on its own; in a world: plays it over the world) | replay list | replay info <file> | replay events <file> (writes <file>.events.json) | replay folder | replay browser <open|close|status> | replay exit",
                 RunReplay,
                 optionsFetcher: GetReplayOptions
             );
@@ -160,6 +165,7 @@ namespace cameraTools.Replay
                 {
                     case "list": ListReplays(args.Context); return;
                     case "folder": args.Context.AddString("OK: folder=" + ReplayFileIO.GetReplayDirectory()); return;
+                    case "events": ExportEvents(args.Context, Find(CommandText.Arg(args, 2, "replay events <file>"))); return;
                     case "info":
                         foreach (string line in Info(Find(CommandText.Arg(args, 2, "replay info <file>")))) args.Context.AddString(line);
                         return;
@@ -198,6 +204,47 @@ namespace cameraTools.Replay
             if (matches.Length == 1) return matches[0];
             if (matches.Length > 1) throw new ArgumentException($"Several recordings match '{name}' when letter case is ignored; use the exact name");
             throw new ArgumentException($"Replay file not found: {name}. Use replay list");
+        }
+
+        /// <summary>The summary, then one line per tag, optionally limited to one type and one actor.</summary>
+        private static IEnumerable<string> EventLines(ReplayEventList list, Terminal.ConsoleEventArgs args)
+        {
+            ReplayEventType? type = null;
+            string? actor = null;
+            for (int index = 2; index < args.Length; index++)
+            {
+                if (ReplayEvents.TryParse(args[index], out ReplayEventType parsed)) type = parsed;
+                else actor = $"{CommandText.Actor(args[index]).User}:{CommandText.Actor(args[index]).Id}";
+            }
+            yield return "OK: " + string.Join(" | ", ReplayEvents.Summary(list));
+            foreach (ReplayEvent tag in list.Events)
+                if ((type == null || tag.Type == type) && (actor == null || tag.Actor == actor)) yield return ReplayEvents.Line(tag);
+        }
+
+        private static readonly Dictionary<string, Task> EventExports = new();
+
+        // Reading a large recording takes seconds, so the file is read and written in the background.
+        private static void ExportEvents(Terminal terminal, string path)
+        {
+            string name = Path.GetFileNameWithoutExtension(path);
+            string json = ReplayEvents.JsonPath(path);
+            if (EventExports.TryGetValue(path, out Task export))
+            {
+                if (!export.IsCompleted) { terminal.AddString($"PENDING: writing {json}"); return; }
+                EventExports.Remove(path);
+                if (export.IsFaulted) throw new InvalidOperationException("Could not write the events: " + export.Exception?.GetBaseException().Message);
+            }
+            if (File.Exists(json) && File.GetLastWriteTimeUtc(json) >= File.GetLastWriteTimeUtc(path))
+            {
+                terminal.AddString($"OK: events json={json}");
+                JObject document = JObject.Parse(File.ReadAllText(json));
+                foreach (JProperty type in ((JObject?)document["types"])?.Properties() ?? Enumerable.Empty<JProperty>())
+                    terminal.AddString($"type {type.Name} {type.Value.ToString(Newtonsoft.Json.Formatting.None)}");
+                return;
+            }
+            HashSet<string> attacks = ReplayEvents.AttackAnimations();
+            EventExports[path] = Task.Run(() => ReplayEvents.WriteJson(json, ReplayEvents.Build(ReplayFileIO.Read(path), attacks)));
+            terminal.AddString($"ACCEPTED: writing {json}; run 'replay events {name}' again until it reports OK");
         }
 
         private static IEnumerable<string> Info(string path)
@@ -249,7 +296,7 @@ namespace cameraTools.Replay
 
         private static List<string> GetReplayOptions()
         {
-            List<string> options = new() { "list", "info", "folder", "browser", "exit" };
+            List<string> options = new() { "list", "info", "events", "folder", "browser", "exit" };
             string directory = ReplayFileIO.GetReplayDirectory();
             if (Directory.Exists(directory)) options.AddRange(Directory.GetFiles(directory, "*.valreplay").Select(Path.GetFileNameWithoutExtension));
             return options;

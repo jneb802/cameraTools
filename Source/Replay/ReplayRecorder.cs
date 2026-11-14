@@ -44,6 +44,7 @@ namespace cameraTools.Replay
         private bool _thumbnailPending;
         private readonly HashSet<(long, uint)> _actors = new();
         private ReplayMediaRecorder? _media;
+        private ReplayEventRecorder? _events;
         private float _nextSample;
         private long _estimatedBytes;
         private readonly Dictionary<Animator, List<(string Path, Transform Bone)>> _bones = new();
@@ -95,7 +96,8 @@ namespace cameraTools.Replay
             _actors.Clear();
 
             IsRecording = true;
-            _media = new ReplayMediaRecorder(_currentReplay);
+            _events = new ReplayEventRecorder(_currentReplay);
+            _media = new ReplayMediaRecorder(_currentReplay, _events);
             cameraToolsPlugin.TemplateLogger.LogInfo($"Recording started: {RecordingName}");
             return true;
         }
@@ -111,6 +113,7 @@ namespace cameraTools.Replay
             IsRecording = false;
             ReplayMediaRecorder.Active = null;
             _media = null;
+            _events = null;
             _currentReplay.Duration = Time.time - _recordStartTime;
             _currentReplay.TriggerEvents.AddRange(_pendingTriggers);
             _scene?.Finish();
@@ -124,9 +127,13 @@ namespace cameraTools.Replay
             _scene = null;
             _bones.Clear();
             _actors.Clear();
-            _saveSummary = $"Recording saved: {RecordingName}.valreplay ({completed.Frames.Count} frames, {completed.Duration:F1}s, {completed.Scene.Count} world objects, {completed.Terrain.Count} zones, {completed.Effects.Count} effects, {completed.Sounds.Count} sounds, {completed.Deaths.Count} deaths)";
+            _saveSummary = $"Recording saved: {RecordingName}.valreplay ({completed.Frames.Count} frames, {completed.Duration:F1}s, {completed.Scene.Count} world objects, {completed.Terrain.Count} zones, {completed.Effects.Count} effects, {completed.Sounds.Count} sounds, {completed.Deaths.Count} deaths, {completed.Attacks.Count} attacks, {completed.Damage.Count} damage samples)";
             // Samples contain copied structs and strings, not live Unity objects.
-            _saveTask = Task.Run(() => ReplayFileIO.Write(path, completed));
+            _saveTask = Task.Run(() =>
+            {
+                ReplayFileIO.Write(path, completed);
+                ReplayEvents.WriteJson(ReplayEvents.JsonPath(path), ReplayEvents.Build(completed, null));
+            });
         }
 
         private void CompleteSave(bool notify = true)
@@ -159,6 +166,7 @@ namespace cameraTools.Replay
                 ZdoID = zdoid.ID,
                 TriggerName = triggerName
             });
+            _events?.Trigger(Time.time - _recordStartTime, zdoid, triggerName);
         }
 
         private void LateUpdate()
@@ -280,6 +288,7 @@ namespace cameraTools.Replay
                     snapshot.RightBackItem = visEquip.m_rightBackItem;
                 }
 
+                if (character != null) _events?.Sample(character, snapshot.ZdoUserID, snapshot.ZdoID, elapsed);
                 snapshot.Visual = ReplayVisuals.Capture(nview.gameObject, ragdoll != null, ref _estimatedBytes);
                 if (_actors.Add((snapshot.ZdoUserID, snapshot.ZdoID)))
                     _currentReplay.Info.Prefabs[snapshot.PrefabHash] = Utils.GetPrefabName(nview.gameObject);

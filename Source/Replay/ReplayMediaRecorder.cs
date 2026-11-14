@@ -9,6 +9,7 @@ namespace cameraTools.Replay
         internal static ReplayMediaRecorder? Active;
         internal static readonly Dictionary<string, GameObject> Prefabs = new();
         private readonly ReplayFile _file;
+        private readonly ReplayEventRecorder _events;
         private readonly float _start;
         private readonly Dictionary<GameObject, EffectTrack> _effects = new();
         private readonly Dictionary<AudioSource, SoundTrack> _sounds = new();
@@ -16,9 +17,9 @@ namespace cameraTools.Replay
         private readonly HashSet<GameObject> _soundRoots = new();
         private readonly Dictionary<AudioSource, int> _lastSoundSample = new();
         private int _sample;
-        internal ReplayMediaRecorder(ReplayFile file)
+        internal ReplayMediaRecorder(ReplayFile file, ReplayEventRecorder events)
         {
-            _file = file; _start = Time.time; Active = this;
+            _file = file; _events = events; _start = Time.time; Active = this;
             foreach (ZSFX sound in Object.FindObjectsByType<ZSFX>(FindObjectsSortMode.None))
                 if (Nearby(sound.transform.position)) _soundRoots.Add(sound.gameObject);
         }
@@ -38,8 +39,7 @@ namespace cameraTools.Replay
         {
             if (!Nearby(character.transform.position)) return;
             ZDO? zdo = character.GetComponent<ZNetView>()?.GetZDO();
-            _file.Deaths.Add(new DeathEvent { Time = Time.time - _start, User = zdo?.m_uid.UserID ?? 0,
-                Id = zdo?.m_uid.ID ?? 0, Name = character.name });
+            _events.Death(Time.time - _start, zdo?.m_uid.UserID ?? 0, zdo?.m_uid.ID ?? 0, character.name);
         }
 
         internal void BeginSample() { _observed.Clear(); _sample++; }
