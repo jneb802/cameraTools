@@ -1,10 +1,22 @@
 using System.Collections.Generic;
+using HarmonyLib;
 using UnityEngine;
 
 namespace cameraTools.Replay
 {
     public class GhostManager
     {
+        [HarmonyPatch(typeof(EnemyHud), nameof(EnemyHud.UpdateHuds))]
+        private static class ReplayCharacterHud
+        {
+            private static void Prefix(EnemyHud __instance)
+            {
+                if (!ReplaySession.Active || !ReplayPlayer.IsPlaying) return;
+                // Replay colliders cannot be hovered. Keep nearby creatures' native level displays
+                // available when the user shows the HUD, including displays added by mods.
+                foreach (EnemyHud.HudData hud in __instance.m_huds.Values) hud.m_hoverTimer = 0f;
+            }
+        }
         // Key: "userID:objectID" string for easy lookup
         private readonly Dictionary<long, Dictionary<uint, GhostInstance>> _ghosts =
             new Dictionary<long, Dictionary<uint, GhostInstance>>();
