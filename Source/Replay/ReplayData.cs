@@ -115,8 +115,10 @@ namespace cameraTools.Replay
     public class ReplayFile
     {
         public const string Magic = "VRPL";
-        public const int Version = 8;
+        public const int Version = 9;
 
+        /// <summary>The format version the file was saved with; older files lack some data.</summary>
+        public int FileVersion = Version;
         public ReplayInfo Info = new();
         public byte[] Thumbnail = System.Array.Empty<byte>();
         public long Timestamp;
@@ -127,6 +129,10 @@ namespace cameraTools.Replay
         public List<EffectTrack> Effects = new();
         public List<SoundTrack> Sounds = new();
         public List<DeathEvent> Deaths = new();
+        public List<DamageEvent> Damage = new();
+        public List<AttackEvent> Attacks = new();
+        /// <summary>Readable actor names (player names, localized creature names), saved since version 9.</summary>
+        public Dictionary<(long, uint), string> ActorNames = new();
         public List<SceneObject> Scene = new();
         public List<TerrainPatch> Terrain = new();
         public List<EnvironmentSample> Environment = new();

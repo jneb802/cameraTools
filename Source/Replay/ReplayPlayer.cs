@@ -40,6 +40,9 @@ namespace cameraTools.Replay
             }
         }
         private ReplayMediaPlayer? _media;
+        private ReplayEventList? _events;
+        /// <summary>The loaded recording's event tags, built once per playback.</summary>
+        internal ReplayEventList Events => _events ??= ReplayEvents.Build(_replay ?? throw new InvalidOperationException("Start a replay first"), ReplayEvents.AttackAnimations());
         public ReplayCameraRig? CameraRig { get; private set; }
         public ReplayMusic? Music { get; private set; }
         private (long, uint)? _cameraTarget;
@@ -136,6 +139,7 @@ namespace cameraTools.Replay
             }
 
             _replay = replay;
+            _events = null;
             _ghostManager = new GhostManager(replay.Info);
             _media = new ReplayMediaPlayer(replay);
             CameraRig = new ReplayCameraRig(replay);
@@ -199,6 +203,7 @@ namespace cameraTools.Replay
             _ghostManager?.DestroyAll();
             _ghostManager = null;
             _replay = null;
+            _events = null;
             _activeEntities.Clear();
             _cameraTarget = null;
             foreach (Renderer renderer in _hidden.Keys)
