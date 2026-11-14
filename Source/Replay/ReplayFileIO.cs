@@ -87,10 +87,7 @@ namespace cameraTools.Replay
                     {
                         foreach (BonePose bone in e.Pose)
                         {
-                            paths.Write(w, bone.Path);
-                            w.Write(bone.Position.x); w.Write(bone.Position.y); w.Write(bone.Position.z);
-                            w.Write(bone.Rotation.x); w.Write(bone.Rotation.y); w.Write(bone.Rotation.z); w.Write(bone.Rotation.w);
-                            w.Write(bone.Scale.x); w.Write(bone.Scale.y); w.Write(bone.Scale.z);
+                            paths.WritePose(w, bone);
                         }
                     }
                     // Equipment (version 3+; item hashes as int since version 4)
@@ -271,9 +268,9 @@ namespace cameraTools.Replay
                             throw new InvalidDataException("Invalid pose count");
                         snapshot.Pose = new System.Collections.Generic.List<BonePose>(boneCount);
                         for (int bone = 0; bone < boneCount; bone++)
-                            snapshot.Pose.Add(new BonePose
+                            snapshot.Pose.Add(paths != null ? paths.ReadPose(r) : new BonePose
                             {
-                                Path = paths != null ? paths.Read(r) : r.ReadString(),
+                                Path = r.ReadString(),
                                 Position = new UnityEngine.Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle()),
                                 Rotation = new UnityEngine.Quaternion(r.ReadSingle(), r.ReadSingle(), r.ReadSingle(), r.ReadSingle()),
                                 Scale = new UnityEngine.Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle())
