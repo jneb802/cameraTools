@@ -80,7 +80,7 @@ namespace cameraTools
 
             GUILayout.BeginHorizontal();
             float currentSmooth = GameCamera.m_instance.GetFreeFlySmoothness();
-            GUILayout.Label($"Smoothness {currentSmooth:F2}", GUILayout.Width(118f));
+            GUILayout.Label($"Smoothness {currentSmooth:F2}", GUILayout.Width(136f));
             float newSmooth = GUILayout.HorizontalSlider(currentSmooth, 0f, 1f);
             if (!Mathf.Approximately(newSmooth, currentSmooth))
             {
