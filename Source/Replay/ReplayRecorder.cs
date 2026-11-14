@@ -15,9 +15,11 @@ namespace cameraTools.Replay
         private Task? _saveTask;
         private string _saveSummary = "";
         public bool IsSaving => _saveTask != null;
-        public string Status => IsSaving ? $"Saving {RecordingName}; wait for the save-complete message." : IsRecording
-            ? $"Recording {RecordingName}: {Time.time - _recordStartTime:F1}s, estimated {_estimatedBytes / (1024f * 1024f):F1}/{cameraToolsPlugin.ReplayMemoryBudgetMiB.Value} MiB, maximum 600s"
-            : $"Not recording. Last take: {RecordingName}. {_stopReason}";
+        public string State => IsSaving ? "saving" : IsRecording ? "recording" : "idle";
+        /// <summary>One line an agent can parse: state is idle, recording or saving.</summary>
+        public string StatusLine => IsSaving ? $"state=saving name={RecordingName}" : IsRecording
+            ? $"state=recording name={RecordingName} seconds={Time.time - _recordStartTime:F1} estimatedMiB={_estimatedBytes / (1024f * 1024f):F1} budgetMiB={cameraToolsPlugin.ReplayMemoryBudgetMiB.Value} maximumSeconds=600"
+            : $"state=idle last={(RecordingName.Length > 0 ? RecordingName : "none")} result=\"{_stopReason.Trim()}\"";
 
         private const int ZdoSalt = 438569;
 
@@ -65,6 +67,13 @@ namespace cameraTools.Replay
             if (ReplayPlayer.IsPlaying || ReplaySession.Active)
             {
                 cameraToolsPlugin.TemplateLogger.LogWarning("Cannot record while replaying!");
+                return false;
+            }
+
+            // In the main menu there is nothing to record, and the take would carry into the next world.
+            if (ZNetScene.instance == null || Player.m_localPlayer == null)
+            {
+                cameraToolsPlugin.TemplateLogger.LogWarning("Cannot record without a loaded world!");
                 return false;
             }
 

@@ -52,7 +52,7 @@ namespace cameraTools.Replay
             SetMenuVisible(false);
         }
 
-        private static void Close()
+        internal static void Close()
         {
             _visible = false;
             SetMenuVisible(true);
@@ -96,15 +96,26 @@ namespace cameraTools.Replay
                     entry.Preview = new Texture2D(2, 2);
                     LoadImage(entry.Preview, entry.Header.Thumbnail, false);
                 }
-                Dictionary<string, BepInEx.PluginInfo> loaded = BepInEx.Bootstrap.Chainloader.PluginInfos;
-                foreach (ReplayMod mod in entry.Header.Info.Mods)
-                {
-                    if (!loaded.TryGetValue(mod.Guid, out BepInEx.PluginInfo plugin)) entry.MissingMods.Add($"{mod.Name} {mod.Version}");
-                    else if (plugin.Metadata.Version.ToString() != mod.Version) entry.ChangedMods.Add($"{mod.Name} {mod.Version} → {plugin.Metadata.Version}");
-                }
+                CompareMods(entry.Header.Info, entry.MissingMods, entry.ChangedMods);
             }
             catch (Exception error) { entry.Error = error.Message; }
         }
+
+        /// <summary>Lists the recording's mods that are not loaded, and those loaded in a different version.</summary>
+        internal static void CompareMods(ReplayInfo info, List<string> missing, List<string> changed)
+        {
+            Dictionary<string, BepInEx.PluginInfo> loaded = BepInEx.Bootstrap.Chainloader.PluginInfos;
+            foreach (ReplayMod mod in info.Mods)
+            {
+                if (!loaded.TryGetValue(mod.Guid, out BepInEx.PluginInfo plugin)) missing.Add($"{mod.Name} {mod.Version}");
+                else if (plugin.Metadata.Version.ToString() != mod.Version) changed.Add($"{mod.Name} {mod.Version} → {plugin.Metadata.Version}");
+            }
+        }
+
+        internal static bool Visible => _visible && FejdStartup.instance != null && !ReplaySession.Active;
+
+        /// <summary>True while the Watch button reads a recording before its session starts.</summary>
+        internal static bool Loading => _instance != null && _instance._loading != null;
 
         private void Update()
         {
