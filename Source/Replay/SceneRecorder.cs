@@ -55,6 +55,14 @@ namespace cameraTools.Replay
         private float _scanTime;
         private long _deferredBytes;
 
+        internal static void Prepare()
+        {
+            // Compile capture methods while the mod loads, not inside the first budgeted slice.
+            foreach (System.Reflection.MethodInfo method in typeof(SceneRecorder).GetMethods(
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly))
+                System.Runtime.CompilerServices.RuntimeHelpers.PrepareMethod(method.MethodHandle);
+        }
+
         internal SceneRecorder(ReplayFile file)
         {
             _file = file;
