@@ -16,6 +16,7 @@ namespace cameraTools.Replay
         private const float ZoneSettleSeconds = 3f;
         private const float ZoneQuietSeconds = 2f;
         private const int LargeStateBytes = 16 * 1024;
+        private const double CaptureBudgetMilliseconds = 2;
 
         private sealed class Tracked
         {
@@ -45,6 +46,14 @@ namespace cameraTools.Replay
         private readonly System.Diagnostics.Stopwatch _clock = new();
         private int _scans;
         private double _slowestScan;
+        private readonly List<KeyValuePair<Vector2s, ZoneSystem.ZoneData>> _pendingTerrain = new();
+        private int _terrainCursor;
+        private int _nearCursor;
+        private int _distantCursor;
+        private bool _pendingScan;
+        private bool _firstScan = true;
+        private float _scanTime;
+        private long _deferredBytes;
 
         internal SceneRecorder(ReplayFile file)
         {
@@ -56,19 +65,28 @@ namespace cameraTools.Replay
         {
             _time = time;
             if (time >= _nextEnvironment) { _nextEnvironment = time + 1f; SampleEnvironment(time); }
-            if (time < _nextScan || ZDOMan.instance == null || ZoneSystem.instance == null || ZNet.instance == null) return;
-            _nextScan = time + ScanInterval;
+            bytes += _deferredBytes;
+            _deferredBytes = 0;
+            if ((!_pendingScan && time < _nextScan) || ZDOMan.instance == null || ZoneSystem.instance == null || ZNet.instance == null) return;
             _clock.Restart();
-            foreach (KeyValuePair<Vector2s, ZoneSystem.ZoneData> zone in ZoneSystem.instance.m_zones)
+            if (!_pendingScan)
             {
-                if (!_zoneSince.ContainsKey(zone.Key)) _zoneSince[zone.Key] = time;
-                if (!_terrain.ContainsKey(zone.Key)) CaptureTerrain(zone.Key, zone.Value, ref bytes);
+                _scanTime = _firstScan ? 0f : time;
+                _firstScan = false;
+                _pendingTerrain.Clear();
+                foreach (KeyValuePair<Vector2s, ZoneSystem.ZoneData> zone in ZoneSystem.instance.m_zones)
+                {
+                    if (!_zoneSince.ContainsKey(zone.Key)) _zoneSince[zone.Key] = _scanTime;
+                    if (!_terrain.ContainsKey(zone.Key)) _pendingTerrain.Add(zone);
+                }
+                _near.Clear(); _distant.Clear();
+                ZDOMan.instance.FindSectorObjects(ZoneSystem.GetZone(ZNet.instance.GetReferencePosition()),
+                    ZNet.instance.GetSyncedSimulationDistance(), _near, _distant);
+                _terrainCursor = _nearCursor = _distantCursor = 0;
+                _pendingScan = true;
             }
-            _near.Clear(); _distant.Clear();
-            ZDOMan.instance.FindSectorObjects(ZoneSystem.GetZone(ZNet.instance.GetReferencePosition()),
-                ZNet.instance.GetSyncedSimulationDistance(), _near, _distant);
-            foreach (ZDO zdo in _near) Observe(zdo, time, true, ref bytes);
-            foreach (ZDO zdo in _distant) Observe(zdo, time, false, ref bytes);
+            CapturePending(ref bytes, true);
+            if (!_pendingScan) _nextScan = time + ScanInterval;
             _clock.Stop();
             _scans++;
             _scanTotal += _clock.Elapsed.TotalMilliseconds;
@@ -76,6 +94,21 @@ namespace cameraTools.Replay
         }
 
         private double _scanTotal;
+
+        private void CapturePending(ref long bytes, bool budgeted)
+        {
+            while (_pendingScan && (!budgeted || _clock.Elapsed.TotalMilliseconds < CaptureBudgetMilliseconds))
+            {
+                if (_terrainCursor < _pendingTerrain.Count)
+                {
+                    KeyValuePair<Vector2s, ZoneSystem.ZoneData> zone = _pendingTerrain[_terrainCursor++];
+                    CaptureTerrain(zone.Key, zone.Value, ref bytes);
+                }
+                else if (_nearCursor < _near.Count) Observe(_near[_nearCursor++], _scanTime, true, ref bytes);
+                else if (_distantCursor < _distant.Count) Observe(_distant[_distantCursor++], _scanTime, false, ref bytes);
+                else _pendingScan = false;
+            }
+        }
 
         private bool IsScene(int prefabHash)
         {
@@ -94,10 +127,10 @@ namespace cameraTools.Replay
 
         private void Observe(ZDO zdo, float time, bool trackChanges, ref long bytes)
         {
-            if (!zdo.Persistent || !IsScene(zdo.GetPrefab())) return;
+            if (zdo == null || !zdo.Persistent || !IsScene(zdo.GetPrefab())) return;
             if (_tracked.TryGetValue(zdo.m_uid, out Tracked tracked))
             {
-                if (!trackChanges || (tracked.Revision == zdo.DataRevision && tracked.Position == zdo.GetPosition())) return;
+                if (!float.IsPositiveInfinity(tracked.Object.Destroyed) || !trackChanges || (tracked.Revision == zdo.DataRevision && tracked.Position == zdo.GetPosition())) return;
                 SceneState last = tracked.Object.States[tracked.Object.States.Count - 1];
                 if (last.Data.Length > LargeStateBytes && time - tracked.LastState < 1f) return;
                 AddState(tracked, zdo, time, ref bytes);
@@ -157,6 +190,21 @@ namespace cameraTools.Replay
 
         private void Destroyed(ZDOID id)
         {
+            // Preserve an initial object even if it is destroyed before its capture slice.
+            if (_pendingScan && !_tracked.ContainsKey(id))
+            {
+                ZDO pending = ZDOMan.instance.GetZDO(id);
+                if (pending != null && (_near.Contains(pending) || _distant.Contains(pending)))
+                    Observe(pending, _scanTime, true, ref _deferredBytes);
+            }
+            // Destroyed ZDO instances can be recycled before the next slice.
+            if (_pendingScan)
+            {
+                for (int index = _nearCursor; index < _near.Count; index++)
+                    if (_near[index] != null && _near[index].m_uid == id) _near[index] = null!;
+                for (int index = _distantCursor; index < _distant.Count; index++)
+                    if (_distant[index] != null && _distant[index].m_uid == id) _distant[index] = null!;
+            }
             if (!_tracked.TryGetValue(id, out Tracked tracked) || !float.IsPositiveInfinity(tracked.Object.Destroyed)) return;
             tracked.Object.Destroyed = Mathf.Max(_time, tracked.Object.Created);
             if (tracked.Piece)
@@ -207,6 +255,8 @@ namespace cameraTools.Replay
 
         internal void Finish()
         {
+            // A short take must still contain the complete initial scene.
+            CapturePending(ref _deferredBytes, false);
             Active = null;
             _file.WorldEvents.Sort((a, b) => a.Time.CompareTo(b.Time));
             _file.Info.Zones = _terrain.Count;
