@@ -107,11 +107,13 @@ namespace cameraTools.Replay
 
         private static void OnPlayerSpawned(Player player)
         {
-            Spawned = true;
             player.m_godMode = true;
             player.m_ghostMode = true;
             player.m_debugFly = true;
             foreach (Collider collider in player.GetComponentsInChildren<Collider>()) collider.enabled = false;
+            // The session player cannot die (see DamagePatch), but a respawn must still leave the running replay alone.
+            if (Spawned) return;
+            Spawned = true;
             CreativeZoneCameraController.SetHudVisible(false);
             ReplayTimelinePanel.Visible = true;
             CreativeZoneCameraController.SetFreeFly(true);
@@ -249,6 +251,24 @@ namespace cameraTools.Replay
             {
                 if (Active) OnPlayerSpawned(__result);
             }
+        }
+
+        private static bool IsSessionPlayer(Character character) => Active && character == Player.m_localPlayer;
+
+        // The hidden session player stands wherever the camera is: in freezing mountains, lava or deep water.
+        // God mode does not protect it, because mods such as Server Devcommands decide the local player's god
+        // mode from their own permissions. A death would show the death screen, respawn the player and pause
+        // the replay, so the session player takes no damage and cannot die by any route.
+        [HarmonyPatch(typeof(Character), nameof(Character.ApplyDamage))]
+        private static class DamagePatch
+        {
+            private static bool Prefix(Character __instance) => !IsSessionPlayer(__instance);
+        }
+
+        [HarmonyPatch(typeof(Character), nameof(Character.CheckDeath))]
+        private static class DeathPatch
+        {
+            private static bool Prefix(Character __instance) => !IsSessionPlayer(__instance);
         }
 
         [HarmonyPatch(typeof(ZNet), nameof(ZNet.SetReferencePosition))]
