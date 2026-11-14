@@ -285,13 +285,12 @@ namespace cameraTools.Replay
             (long, uint) key = (user, id);
             if (!_file.ActorNames.ContainsKey(key)) _file.ActorNames[key] = character.GetHoverName();
             float health = character.GetHealth();
-            if (_health.TryGetValue(key, out float previous) && health < previous - 0.01f)
-            {
-                _file.Damage.Add(new DamageEvent { Time = time, User = user, Id = id, Amount = previous - health, Health = Mathf.Max(0f, health) });
-                // A character another player's game simulates dies there; this game sees its health reach zero.
-                if (health <= 0f) Death(time, user, id, character.name);
-            }
+            bool sampled = _health.TryGetValue(key, out float previous);
             _health[key] = health;
+            if (!sampled || health >= previous - 0.01f) return;
+            _file.Damage.Add(new DamageEvent { Time = time, User = user, Id = id, Amount = previous - health, Health = Mathf.Max(0f, health) });
+            // A character another player's game simulates dies there; this game sees its health reach zero.
+            if (health <= 0f) Death(time, user, id, character.name);
         }
 
         internal void Death(float time, long user, uint id, string name)
