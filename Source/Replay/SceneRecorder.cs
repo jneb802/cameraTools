@@ -94,7 +94,9 @@ namespace cameraTools.Replay
 
         private void Observe(ZDO zdo, float time, bool trackChanges, ref long bytes)
         {
-            if (!zdo.Persistent || !IsScene(zdo.GetPrefab())) return;
+            if (zdo == null || !IsScene(zdo.GetPrefab())) return;
+            // Players are not persistent world objects, but their replicated equipment data is needed.
+            if (!zdo.Persistent && ZNetScene.instance.GetPrefab(zdo.GetPrefab()).GetComponent<Character>() == null) return;
             if (_tracked.TryGetValue(zdo.m_uid, out Tracked tracked))
             {
                 if (!trackChanges || (tracked.Revision == zdo.DataRevision && tracked.Position == zdo.GetPosition())) return;
