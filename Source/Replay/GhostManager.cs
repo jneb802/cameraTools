@@ -24,6 +24,8 @@ namespace cameraTools.Replay
             public VisEquipment? VisEquipment;
             public readonly Dictionary<string, Transform> Bones = new();
             public VisualPlayer Visual;
+            public bool OwnsObject = true;
+            public readonly List<AudioSource> Audio = new();
 
             public GhostInstance(GameObject go, Animator? animator, VisEquipment? visEquipment)
             {
@@ -119,7 +121,36 @@ namespace cameraTools.Replay
         {
             if (a.Visual != null && _ghosts.TryGetValue(a.ZdoUserID, out Dictionary<uint, GhostInstance> entries)
                 && entries.TryGetValue(a.ZdoID, out GhostInstance ghost))
+            {
                 ghost.Visual.Apply(a.Visual, b.Visual ?? a.Visual, fraction);
+                if (!ghost.OwnsObject)
+                {
+                    // Equipment scripts can add audio sources after the character is created.
+                    ghost.GameObject.GetComponentsInChildren(true, ghost.Audio);
+                    foreach (AudioSource source in ghost.Audio) { source.playOnAwake = false; source.enabled = false; }
+                }
+            }
+        }
+
+        internal void BindCharacter(long user, uint id, GameObject character)
+        {
+            if (!_ghosts.TryGetValue(user, out Dictionary<uint, GhostInstance> entries))
+            {
+                entries = new Dictionary<uint, GhostInstance>();
+                _ghosts[user] = entries;
+            }
+            if (entries.TryGetValue(id, out GhostInstance existing) && existing.GameObject == character) return;
+            GhostInstance instance = new GhostInstance(character, character.GetComponentInChildren<Animator>(), character.GetComponent<VisEquipment>())
+            { OwnsObject = false };
+            entries[id] = instance;
+            foreach (Animator animator in character.GetComponentsInChildren<Animator>(true))
+            { animator.fireEvents = false; animator.enabled = false; }
+            DisableComponent<ZSyncAnimation>(character);
+            DisableComponent<ZSyncTransform>(character);
+            foreach (FootStep footsteps in character.GetComponentsInChildren<FootStep>(true)) footsteps.enabled = false;
+            foreach (CharacterAnimEvent events in character.GetComponentsInChildren<CharacterAnimEvent>(true)) events.enabled = false;
+            foreach (Collider collider in character.GetComponentsInChildren<Collider>(true)) collider.enabled = false;
+            foreach (Rigidbody body in character.GetComponentsInChildren<Rigidbody>(true)) body.isKinematic = true;
         }
 
         public void UpdateGhost(long userID, uint objectID, Vector3 position, Quaternion rotation,
@@ -288,7 +319,7 @@ namespace cameraTools.Replay
 
             if (innerDict.TryGetValue(objectID, out var ghost))
             {
-                if (ghost.GameObject != null)
+                if (ghost.GameObject != null && ghost.OwnsObject)
                     Object.Destroy(ghost.GameObject);
                 innerDict.Remove(objectID);
             }
@@ -303,7 +334,7 @@ namespace cameraTools.Replay
             {
                 foreach (var ghost in innerDict.Values)
                 {
-                    if (ghost.GameObject != null)
+                    if (ghost.GameObject != null && ghost.OwnsObject)
                         Object.Destroy(ghost.GameObject);
                 }
             }

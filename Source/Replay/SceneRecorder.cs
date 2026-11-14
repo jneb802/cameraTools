@@ -114,11 +114,11 @@ namespace cameraTools.Replay
         {
             if (_sceneKind.TryGetValue(prefabHash, out bool scene)) return scene;
             GameObject prefab = ZNetScene.instance.GetPrefab(prefabHash);
-            // Characters, projectiles and ragdolls are recorded every frame as actors. Dropped items are
+            // Projectiles and ragdolls are recorded every frame as copies. Characters and dropped items are
             // recorded both ways: their object data lets the replay session rebuild them as real items, so
             // mods that decorate items (EpicLoot's loot beams) see the item's own data; the per-frame samples
             // move them and keep the overlay replay working.
-            scene = prefab != null && prefab.GetComponent<Character>() == null && prefab.GetComponent<Projectile>() == null &&
+            scene = prefab != null && prefab.GetComponent<Projectile>() == null &&
                 prefab.GetComponent<Ragdoll>() == null;
             _sceneKind[prefabHash] = scene;
             if (prefab != null) _file.Info.Prefabs[prefabHash] = prefab.name;
