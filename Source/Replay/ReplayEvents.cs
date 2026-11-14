@@ -27,7 +27,7 @@ namespace cameraTools.Replay
         public string Animation;
     }
 
-    public enum ReplayEventType { Death, AttackStart, DamageTaken }
+    public enum ReplayEventType { Death, AttackStart, DamageTaken, Hit }
 
     /// <summary>One tagged moment, timed in seconds from the start of the replay (the clock ct_replay seek uses).</summary>
     public sealed class ReplayEvent
@@ -41,6 +41,9 @@ namespace cameraTools.Replay
         public float Amount;
         public float Health;
         public string Animation = "";
+        /// <summary>attack_start: the creature AI's target. hit: the attacker. Empty when unknown.</summary>
+        public string Other = "";
+        public HitEvent HitData;
         public string Actor => User + ":" + Id;
     }
 
@@ -64,7 +67,8 @@ namespace cameraTools.Replay
     {
         /// <summary>How far a tag's time can be from the moment it shows in playback.</summary>
         public const float ToleranceSeconds = 0.25f;
-        private static readonly string[] TypeNames = { "death", "attack_start", "damage_taken" };
+        private static readonly string[] TypeNames = { "death", "attack_start", "damage_taken", "hit" };
+        internal static readonly ReplayEventType[] AllTypes = { ReplayEventType.Death, ReplayEventType.AttackStart, ReplayEventType.DamageTaken, ReplayEventType.Hit };
         private static HashSet<string>? _attackAnimations;
 
         public static string Name(ReplayEventType type) => TypeNames[(int)type];
@@ -76,6 +80,7 @@ namespace cameraTools.Replay
                 case "death": case "deaths": type = ReplayEventType.Death; return true;
                 case "attack": case "attacks": case "attack_start": type = ReplayEventType.AttackStart; return true;
                 case "damage": case "damage_taken": type = ReplayEventType.DamageTaken; return true;
+                case "hit": case "hits": type = ReplayEventType.Hit; return true;
                 default: type = ReplayEventType.Death; return false;
             }
         }
@@ -151,10 +156,12 @@ namespace cameraTools.Replay
             }
 
             if (replay.FileVersion >= 9)
-                foreach (AttackEvent attack in replay.Attacks)
+                for (int index = 0; index < replay.Attacks.Count; index++)
                 {
+                    AttackEvent attack = replay.Attacks[index];
                     ReplayEvent tag = Event(attack.Time, ReplayEventType.AttackStart, attack.User, attack.Id);
                     tag.Animation = attack.Animation;
+                    if (replay.AttackTargets.TryGetValue(index, out (long, uint) target)) tag.Other = target.Item1 + ":" + target.Item2;
                     list.Events.Add(tag);
                 }
             else if (attackAnimations == null || attackAnimations.Count == 0)
@@ -180,6 +187,20 @@ namespace cameraTools.Replay
                     list.Events.Add(tag);
                 }
 
+            if (replay.FileVersion < 10) list.Unavailable[ReplayEventType.Hit] = $"File version {replay.FileVersion} saved no hit details; version 10 and later do";
+            else
+            {
+                foreach (HitEvent hit in replay.Hits)
+                {
+                    ReplayEvent tag = Event(hit.Time, ReplayEventType.Hit, hit.VictimUser, hit.VictimId);
+                    tag.HitData = hit;
+                    tag.Amount = hit.Taken;
+                    if (hit.AttackerUser != 0 || hit.AttackerId != 0) tag.Other = hit.AttackerUser + ":" + hit.AttackerId;
+                    list.Events.Add(tag);
+                }
+                list.Notes[ReplayEventType.Hit] = "Only hits this game processed: characters it simulated. Hits another player's game processed are missing rather than guessed";
+            }
+
             list.Events.Sort((a, b) =>
             {
                 int order = a.Time.CompareTo(b.Time);
@@ -199,14 +220,29 @@ namespace cameraTools.Replay
             if (tag.Type == ReplayEventType.DamageTaken)
                 line.Append(" amount=").Append(tag.Amount.ToString("F1", CultureInfo.InvariantCulture))
                     .Append(" health=").Append(tag.Health.ToString("F1", CultureInfo.InvariantCulture));
-            if (tag.Type == ReplayEventType.AttackStart) line.Append(" animation=").Append(tag.Animation);
+            if (tag.Type == ReplayEventType.AttackStart)
+            {
+                line.Append(" animation=").Append(tag.Animation);
+                if (tag.Other.Length > 0) line.Append(" target=").Append(tag.Other);
+            }
+            if (tag.Type == ReplayEventType.Hit)
+            {
+                HitEvent hit = tag.HitData;
+                line.Append(" attacker=").Append(tag.Other.Length > 0 ? tag.Other : "none")
+                    .Append(" result=").Append(string.Join(",", CombatData.ResultNames(hit.Result)))
+                    .Append(" taken=").Append(hit.Taken.ToString("F1", CultureInfo.InvariantCulture))
+                    .Append(" point=").Append(hit.Point.x.ToString("F2", CultureInfo.InvariantCulture)).Append(',')
+                    .Append(hit.Point.y.ToString("F2", CultureInfo.InvariantCulture)).Append(',').Append(hit.Point.z.ToString("F2", CultureInfo.InvariantCulture));
+                if (hit.ProjectileUser != 0 || hit.ProjectileId != 0) line.Append(" projectile=").Append(hit.ProjectileUser).Append(':').Append(hit.ProjectileId);
+                line.Append(" hitType=").Append(hit.HitType).Append(" skill=").Append(hit.Skill);
+            }
             return line.ToString();
         }
 
         internal static IEnumerable<string> Summary(ReplayEventList list)
         {
             yield return $"events replay={list.Replay} fileVersion={list.FileVersion} duration={list.Duration.ToString("F3", CultureInfo.InvariantCulture)} toleranceSeconds={ToleranceSeconds.ToString(CultureInfo.InvariantCulture)} total={list.Events.Count}";
-            foreach (ReplayEventType type in new[] { ReplayEventType.Death, ReplayEventType.AttackStart, ReplayEventType.DamageTaken })
+            foreach (ReplayEventType type in AllTypes)
             {
                 if (list.Unavailable.TryGetValue(type, out string reason)) yield return $"type {Name(type)} available=false reason=\"{reason}\"";
                 else
@@ -217,13 +253,33 @@ namespace cameraTools.Replay
             }
         }
 
+        internal static void AddHit(Dictionary<string, object> entry, ReplayEvent tag)
+        {
+            HitEvent hit = tag.HitData;
+            entry["attacker"] = tag.Other.Length > 0 ? tag.Other : null!;
+            entry["result"] = CombatData.ResultNames(hit.Result).ToArray();
+            entry["taken"] = System.Math.Round(hit.Taken, 2);
+            entry["point"] = Round(hit.Point);
+            entry["direction"] = Round(hit.Direction);
+            Dictionary<string, double> damage = new();
+            float[] values = hit.Damage ?? System.Array.Empty<float>();
+            for (int index = 0; index < values.Length && index < CombatData.DamageTypeNames.Length; index++)
+                if (values[index] > 0f) damage[CombatData.DamageTypeNames[index]] = System.Math.Round(values[index], 2);
+            entry["damage"] = damage;
+            if (hit.ProjectileUser != 0 || hit.ProjectileId != 0) entry["projectile"] = hit.ProjectileUser + ":" + hit.ProjectileId;
+            entry["hitType"] = hit.HitType;
+            entry["skill"] = hit.Skill;
+        }
+
+        internal static double[] Round(Vector3 value) => new[] { System.Math.Round(value.x, 3), System.Math.Round(value.y, 3), System.Math.Round(value.z, 3) };
+
         /// <summary>The JSON file an agent reads next to a recording: &lt;name&gt;.events.json.</summary>
         internal static string JsonPath(string replayPath) => Path.ChangeExtension(replayPath, ".events.json");
 
         internal static void WriteJson(string path, ReplayEventList list)
         {
             Dictionary<string, object> types = new();
-            foreach (ReplayEventType type in new[] { ReplayEventType.Death, ReplayEventType.AttackStart, ReplayEventType.DamageTaken })
+            foreach (ReplayEventType type in AllTypes)
             {
                 Dictionary<string, object> entry = new() { ["available"] = !list.Unavailable.ContainsKey(type) };
                 if (list.Unavailable.TryGetValue(type, out string reason)) entry["reason"] = reason;
@@ -240,7 +296,12 @@ namespace cameraTools.Replay
                     ["prefab"] = tag.Prefab, ["name"] = tag.Name
                 };
                 if (tag.Type == ReplayEventType.DamageTaken) { entry["amount"] = System.Math.Round(tag.Amount, 2); entry["health"] = System.Math.Round(tag.Health, 2); }
-                if (tag.Type == ReplayEventType.AttackStart) entry["animation"] = tag.Animation;
+                if (tag.Type == ReplayEventType.AttackStart)
+                {
+                    entry["animation"] = tag.Animation;
+                    if (tag.Other.Length > 0) entry["target"] = tag.Other;
+                }
+                if (tag.Type == ReplayEventType.Hit) AddHit(entry, tag);
                 events.Add(entry);
             }
             Dictionary<string, object> document = new()
@@ -254,7 +315,8 @@ namespace cameraTools.Replay
                 {
                     ["death"] = "The actor died: the game ran its death (the recording game simulated the actor), or its synced health reached zero. One per actor.",
                     ["attack_start"] = "The actor started an attack: the game triggered a weapon or creature attack animation. A combo has one per swing.",
-                    ["damage_taken"] = "The actor's synced health dropped between two recorded samples (30 per second), or the actor died with health left at its last sample (the killing blow). amount is the drop; health is what remains."
+                    ["damage_taken"] = "The actor's synced health dropped between two recorded samples (30 per second), or the actor died with health left at its last sample (the killing blow). amount is the drop; health is what remains.",
+                    ["hit"] = "A hit the recording game applied to the actor (the victim): attacker, hit point, direction, damage per type before resistances, health taken, and how it resolved (hit, blocked, parried, staggered, backstab, killed, critical, dodged, guard_broken)."
                 },
                 ["types"] = types,
                 ["events"] = events
@@ -308,8 +370,17 @@ namespace cameraTools.Replay
 
         internal void Trigger(float time, ZDOID id, string trigger)
         {
-            if (ReplayEvents.IsAttack(trigger, _attackAnimations))
-                _file.Attacks.Add(new AttackEvent { Time = time, User = id.UserID, Id = id.ID, Animation = trigger });
+            if (!ReplayEvents.IsAttack(trigger, _attackAnimations)) return;
+            _file.Attacks.Add(new AttackEvent { Time = time, User = id.UserID, Id = id.ID, Animation = trigger });
+            // A creature's AI knows what it is attacking; a player's target is not guessed.
+            GameObject? attacker = ZNetScene.instance != null ? ZNetScene.instance.FindInstance(id) : null;
+            BaseAI? ai = attacker != null ? attacker.GetComponent<BaseAI>() : null;
+            Character? target = ai != null ? ai.GetTargetCreature() : null;
+            if (target != null)
+            {
+                ZDOID targetId = target.GetZDOID();
+                _file.AttackTargets[_file.Attacks.Count - 1] = (targetId.UserID, targetId.ID);
+            }
         }
     }
 

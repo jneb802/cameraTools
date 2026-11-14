@@ -28,6 +28,19 @@ namespace cameraTools.Replay
             GUILayout.EndHorizontal();
             float time = GUILayout.HorizontalSlider(player.PlaybackTime, 0, player.Duration);
             if (!Mathf.Approximately(time, player.PlaybackTime)) player.Seek(time);
+            if (player.Highlights.Count > 0 && Event.current.type == EventType.Repaint && player.Duration > 0f)
+            {
+                // A mark above the timeline for each highlight.
+                Rect slider = GUILayoutUtility.GetLastRect();
+                Color previous = GUI.color;
+                GUI.color = new Color(1f, 0.8f, 0.2f);
+                foreach (Highlight highlight in player.Highlights)
+                {
+                    float x = slider.x + slider.width * Mathf.Clamp01(highlight.t / player.Duration);
+                    GUI.DrawTexture(new Rect(x - 1.5f, slider.y - 4f, 3f, slider.height + 8f), Texture2D.whiteTexture);
+                }
+                GUI.color = previous;
+            }
             ReplayCameraRig? rig = player.CameraRig;
             if (rig != null)
             {
@@ -63,7 +76,7 @@ namespace cameraTools.Replay
                     GUILayout.Label("Game music is muted. Raise Master and Music volume in Settings.");
             }
             if (player.SceneSummary.Length > 0) GUILayout.Label(player.SceneSummary);
-            GUILayout.Label("Left-click: aim lock • Secondary attack: attach");
+            GUILayout.Label($"Left-click: aim lock • Secondary attack: attach • {cameraToolsPlugin.HighlightKey.Value}: highlight ({player.Highlights.Count})");
             if (_message.Length > 0) GUILayout.Label(_message);
         }
 

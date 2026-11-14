@@ -29,6 +29,8 @@ namespace cameraTools
         public static ConfigEntry<KeyboardShortcut> PanelToggleKey = null!;
         public static ConfigEntry<float> DefaultSmoothness = null!;
         public static ConfigEntry<int> ReplayMemoryBudgetMiB = null!;
+        public static ConfigEntry<int> ReplaySampleRate = null!;
+        public static ConfigEntry<KeyboardShortcut> HighlightKey = null!;
 
         public void Awake()
         {
@@ -40,6 +42,11 @@ namespace cameraTools
             ReplayMemoryBudgetMiB = Config.Bind("Replay", "MemoryBudgetMiB", 2048,
                 new ConfigDescription("Estimated recording sample memory budget in MiB. The take saves automatically at this budget or 10 minutes. Lower this on machines with limited free memory; effects increase memory use.",
                     new AcceptableValueRange<int>(128, 8192)));
+            ReplaySampleRate = Config.Bind("Recording", "SampleRate", 30,
+                new ConfigDescription("Samples per second for new takes. 60 keeps fast attacks smooth in deep slow motion and uses about twice the memory and file size.",
+                    new AcceptableValueList<int>(30, 60)));
+            HighlightKey = Config.Bind("Replay", "HighlightKey", new KeyboardShortcut(KeyCode.H),
+                "While watching a replay, tags the current moment and camera view as a highlight");
 
             MarkerMode.BindConfig(Config);
 
@@ -51,6 +58,8 @@ namespace cameraTools
             gameObject.AddComponent<CreativeZoneCameraController>();
             gameObject.AddComponent<ReplayRecorder>();
             gameObject.AddComponent<ReplayPlayer>();
+            gameObject.AddComponent<FightOverlay>();
+            gameObject.AddComponent<cameraTools.Replay.Shots.ShotPlayer>();
             gameObject.AddComponent<ReplayBrowser>();
             gameObject.AddComponent<MarkerMode>();
             gameObject.AddComponent<MarkerRenderer>();
@@ -59,6 +68,7 @@ namespace cameraTools
             CreativeZoneCameraController.RegisterCommands();
             ReplayCommands.Register();
             AgentCommands.Register();
+            cameraTools.Replay.Shots.ShotCommands.Register();
             MarkerCommands.Register();
         }
 
