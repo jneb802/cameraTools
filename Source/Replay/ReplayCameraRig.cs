@@ -18,6 +18,8 @@ namespace cameraTools.Replay
         private bool _waiting;
         internal static bool Updating;
         public int Selected { get; set; }
+        /// <summary>The selected target as user:id, or empty when the recording has no targets.</summary>
+        public string SelectedActor => Selected >= 0 && Selected < _ids.Count ? $"{_ids[Selected].Item1}:{_ids[Selected].Item2}" : "";
         public string Status => _waiting ? "Target absent here; seek to its recorded lifetime" :
             _attachment.HasValue ? "Attached: camera moves and turns with target" :
             _aim.HasValue ? "Aim locked: camera position is free" : "Free camera";
