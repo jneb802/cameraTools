@@ -55,13 +55,9 @@ namespace cameraTools.Replay
         private float _scanTime;
         private long _deferredBytes;
 
-        internal static void Prepare()
-        {
-            // Compile capture methods while the mod loads, not inside the first budgeted slice.
-            foreach (System.Reflection.MethodInfo method in typeof(SceneRecorder).GetMethods(
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly))
-                System.Runtime.CompilerServices.RuntimeHelpers.PrepareMethod(method.MethodHandle);
-        }
+        private double _slowestWork;
+        private string _slowestWorkKind = "none";
+        private int _gcSlices;
 
         internal SceneRecorder(ReplayFile file)
         {
@@ -77,6 +73,7 @@ namespace cameraTools.Replay
             _deferredBytes = 0;
             if ((!_pendingScan && time < _nextScan) || ZDOMan.instance == null || ZoneSystem.instance == null || ZNet.instance == null) return;
             _clock.Restart();
+            int collections = System.GC.CollectionCount(0);
             if (!_pendingScan)
             {
                 _scanTime = _firstScan ? 0f : time;
@@ -92,10 +89,12 @@ namespace cameraTools.Replay
                     ZNet.instance.GetSyncedSimulationDistance(), _near, _distant);
                 _terrainCursor = _nearCursor = _distantCursor = 0;
                 _pendingScan = true;
+                TrackWork("enumeration", 0);
             }
             CapturePending(ref bytes, true);
             if (!_pendingScan) _nextScan = time + ScanInterval;
             _clock.Stop();
+            if (System.GC.CollectionCount(0) != collections) _gcSlices++;
             _scans++;
             _scanTotal += _clock.Elapsed.TotalMilliseconds;
             _slowestScan = System.Math.Max(_slowestScan, _clock.Elapsed.TotalMilliseconds);
@@ -103,24 +102,36 @@ namespace cameraTools.Replay
 
         private double _scanTotal;
 
+        private void TrackWork(string kind, long started)
+        {
+            double elapsed = (_clock.ElapsedTicks - started) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            if (elapsed > _slowestWork) { _slowestWork = elapsed; _slowestWorkKind = kind; }
+        }
+
         private void CapturePending(ref long bytes, bool budgeted)
         {
             while (_pendingScan && (!budgeted || _clock.Elapsed.TotalMilliseconds < CaptureBudgetMilliseconds))
             {
                 if (_terrainCursor < _pendingTerrain.Count)
                 {
+                    long started = _clock.ElapsedTicks;
                     KeyValuePair<Vector2s, ZoneSystem.ZoneData> zone = _pendingTerrain[_terrainCursor++];
                     CaptureTerrain(zone.Key, zone.Value, ref bytes);
+                    TrackWork("terrain", started);
                 }
                 else if (_nearCursor < _near.Count)
                 {
                     ZDO zdo = _near[_nearCursor++];
+                    long started = _clock.ElapsedTicks;
                     if (zdo != null) Observe(zdo, _scanTime, true, ref bytes);
+                    TrackWork("near object", started);
                 }
                 else if (_distantCursor < _distant.Count)
                 {
                     ZDO zdo = _distant[_distantCursor++];
+                    long started = _clock.ElapsedTicks;
                     if (zdo != null) Observe(zdo, _scanTime, false, ref bytes);
+                    TrackWork("distant object", started);
                 }
                 else _pendingScan = false;
             }
@@ -278,6 +289,7 @@ namespace cameraTools.Replay
             _file.Info.Zones = _terrain.Count;
             _file.Info.SceneObjects = _file.Scene.Count;
             cameraToolsPlugin.TemplateLogger.LogInfo($"[SceneRecorder] {_file.Scene.Count} objects, {_terrain.Count} zones, {_file.Environment.Count} weather samples, {_file.WorldEvents.Count} piece events; {_scans} scans, average {(_scans > 0 ? _scanTotal / _scans : 0):F2} ms, slowest {_slowestScan:F2} ms");
+            cameraToolsPlugin.TemplateLogger.LogInfo($"[SceneRecorder] longest work: {_slowestWorkKind} {_slowestWork:F2} ms; {_gcSlices} capture slices included garbage collection");
         }
 
         [HarmonyPatch(typeof(ZDOMan), nameof(ZDOMan.CreateNewZDO), typeof(Vector3), typeof(int))]
