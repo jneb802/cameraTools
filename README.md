@@ -4,7 +4,7 @@ Valheim client-side camera helpers for build recording, screenshots, and replay 
 
 ## Panel
 
-Press `F6` to open the camera tools panel. The panel can:
+Press `F6` to open the camera tools panel. The cameraTools windows are drawn at Valheim's own menu scale (screen size and the game's UI scale setting), with text and controls sized like the inventory and crafting menus, so they keep the same size relative to the game at every resolution. The panel can:
 
 - Toggle freefly.
 - Toggle HUD visibility.

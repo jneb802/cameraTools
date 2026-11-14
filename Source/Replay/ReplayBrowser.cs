@@ -122,13 +122,15 @@ namespace cameraTools.Replay
             if (!_visible || FejdStartup.instance == null || ReplaySession.Active) return;
             GUISkin previous = GUI.skin;
             GUI.skin = CameraPanelStyle.Skin;
+            Matrix4x4 matrix = CameraPanelStyle.BeginScaled();
             try
             {
-                float width = Mathf.Min(1100f, Screen.width - 40f), height = Mathf.Min(720f, Screen.height - 40f);
-                _window = new Rect((Screen.width - width) / 2f, (Screen.height - height) / 2f, width, height);
+                Vector2 screen = CameraPanelStyle.ReferenceScreen;
+                float width = Mathf.Min(1000f, screen.x - 40f), height = Mathf.Min(660f, screen.y - 40f);
+                _window = new Rect((screen.x - width) / 2f, (screen.y - height) / 2f, width, height);
                 GUILayout.Window(WindowId, _window, Draw, "Replays");
             }
-            finally { GUI.skin = previous; }
+            finally { GUI.matrix = matrix; GUI.skin = previous; }
         }
 
         private void Draw(int id)
@@ -162,17 +164,17 @@ namespace cameraTools.Replay
             GUILayout.BeginHorizontal();
             bool canWatch = _selected?.Header != null && _selected.Header.Info.CanLoadAlone;
             GUI.enabled = canWatch;
-            if (GUILayout.Button("Watch", GUILayout.Width(160)) && _selected != null)
+            if (GUILayout.Button("Watch", GUILayout.Width(130)) && _selected != null)
             {
                 string path = _selected.Path;
                 _message = "";
                 _loading = Task.Run(() => ReplayFileIO.Read(path));
             }
             GUI.enabled = true;
-            if (GUILayout.Button("Refresh", GUILayout.Width(130))) Refresh();
-            if (GUILayout.Button("Open folder", GUILayout.Width(160))) Application.OpenURL(new Uri(ReplayFileIO.GetReplayDirectory()).AbsoluteUri);
+            if (GUILayout.Button("Refresh", GUILayout.Width(110))) Refresh();
+            if (GUILayout.Button("Open folder", GUILayout.Width(130))) Application.OpenURL(new Uri(ReplayFileIO.GetReplayDirectory()).AbsoluteUri);
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("Close", GUILayout.Width(130))) Close();
+            if (GUILayout.Button("Close", GUILayout.Width(110))) Close();
             GUILayout.EndHorizontal();
         }
 
