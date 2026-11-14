@@ -78,7 +78,7 @@ namespace cameraTools.Replay
         private static void WriteVisual(BinaryWriter writer, VisualState visual, ReplayPaths paths)
         {
             Vector(writer, visual.Scale); writer.Write(visual.Nodes.Count);
-            foreach (BonePose pose in visual.Nodes) { paths.Write(writer, pose.Path); Vector(writer, pose.Position); Rotation(writer, pose.Rotation); Vector(writer, pose.Scale); }
+            foreach (BonePose pose in visual.Nodes) paths.WritePose(writer, pose);
             writer.Write(visual.Particles.Count);
             foreach (ParticleState state in visual.Particles)
             {
@@ -105,7 +105,7 @@ namespace cameraTools.Replay
         {
             VisualState visual = new() { Scale = Vector(reader) };
             int count = Count(reader);
-            for (int i = 0; i < count; i++) visual.Nodes.Add(new BonePose { Path = paths != null ? paths.Read(reader) : reader.ReadString(), Position = Vector(reader), Rotation = Rotation(reader), Scale = Vector(reader) });
+            for (int i = 0; i < count; i++) visual.Nodes.Add(paths != null ? paths.ReadPose(reader) : new BonePose { Path = reader.ReadString(), Position = Vector(reader), Rotation = Rotation(reader), Scale = Vector(reader) });
             count = Count(reader);
             for (int i = 0; i < count; i++)
             {
