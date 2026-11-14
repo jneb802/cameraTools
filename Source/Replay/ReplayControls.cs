@@ -12,38 +12,37 @@ namespace cameraTools.Replay
         internal void Draw()
         {
             ReplayPlayer player = ReplayPlayer.Instance;
-            GUILayout.Label($"{FormatTime(player.PlaybackTime)} / {FormatTime(player.Duration)}    •    {(player.IsPaused ? "Paused" : "Playing")}");
-            float time = GUILayout.HorizontalSlider(player.PlaybackTime, 0, player.Duration);
-            if (!Mathf.Approximately(time, player.PlaybackTime)) player.Seek(time);
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button(player.IsPaused ? "Play" : "Pause", GUILayout.Width(100))) player.TogglePause();
-            if (GUILayout.Button("−", GUILayout.Width(40))) player.AdjustSpeed(-0.25f);
-            GUILayout.Label($"{player.PlaybackSpeed:F2}×", GUILayout.Width(75));
-            if (GUILayout.Button("+", GUILayout.Width(40))) player.AdjustSpeed(0.25f);
+            GUILayout.Label($"{FormatTime(player.PlaybackTime)} / {FormatTime(player.Duration)}", GUILayout.Width(112));
+            if (GUILayout.Button(player.IsPaused ? "Play" : "Pause", GUILayout.Width(64))) player.TogglePause();
+            if (GUILayout.Button("−", GUILayout.Width(28))) player.AdjustSpeed(-0.25f);
+            GUILayout.Label($"{player.PlaybackSpeed:F2}×", GUILayout.Width(46));
+            if (GUILayout.Button("+", GUILayout.Width(28))) player.AdjustSpeed(0.25f);
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button(player.Isolated ? "Back to menu" : "Exit replay", GUILayout.Width(150)))
+            if (GUILayout.Button(player.Isolated ? "Back to menu" : "Exit replay", GUILayout.Width(112)))
             {
                 if (player.Isolated) ReplaySession.Exit(); else player.StopPlayback();
                 GUILayout.EndHorizontal();
                 return;
             }
             GUILayout.EndHorizontal();
+            float time = GUILayout.HorizontalSlider(player.PlaybackTime, 0, player.Duration);
+            if (!Mathf.Approximately(time, player.PlaybackTime)) player.Seek(time);
             ReplayCameraRig? rig = player.CameraRig;
             if (rig != null)
             {
-                GUILayout.Space(8);
                 rig.Selected = _targets.Draw("Target", rig.Labels, rig.Selected);
                 GUILayout.BeginHorizontal();
                 ViewButton(rig, "Aim at", "aim");
-                ViewButton(rig, "Attach here", "attach");
-                if (GUILayout.Button("Find target")) { rig.SeekToSelected(); _message = ""; }
+                ViewButton(rig, "Attach", "attach");
+                if (GUILayout.Button("Find")) { rig.SeekToSelected(); _message = ""; }
                 if (GUILayout.Button("Detach")) { player.Detach(); _message = ""; }
                 GUILayout.EndHorizontal();
                 GUILayout.BeginHorizontal();
                 ViewButton(rig, "Third person", "third");
                 ViewButton(rig, "Front", "front");
                 ViewButton(rig, "Projectile", "projectile");
-                if (player.HasRecordedCamera && GUILayout.Button(player.FollowingRecordedCamera ? "Recorded camera ✓" : "Recorded camera"))
+                if (player.HasRecordedCamera && CameraPanelStyle.ToggleButton(player.FollowingRecordedCamera, "Recorded") != player.FollowingRecordedCamera)
                 {
                     if (player.FollowingRecordedCamera) player.Detach(); else player.FollowRecordedCamera();
                     _message = "";
@@ -57,7 +56,7 @@ namespace cameraTools.Replay
                 int selected = _music.Draw("Music", music.Labels, music.Selected);
                 if (selected != music.Selected) music.Select(selected);
                 GUILayout.BeginHorizontal();
-                GUILayout.Label($"Music volume {music.Volume:P0}", GUILayout.Width(180));
+                GUILayout.Label($"Music volume {music.Volume:P0}", GUILayout.Width(150));
                 music.Volume = GUILayout.HorizontalSlider(music.Volume, 0, 1);
                 GUILayout.EndHorizontal();
                 if (music.Selected > 0 && MusicMan.m_masterMusicVolume <= 0)
