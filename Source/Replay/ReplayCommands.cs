@@ -147,7 +147,7 @@ namespace cameraTools.Replay
             string? name = action == "start" ? (args.Length >= 3 ? args[2] : null) : action == "toggle" ? null : args[1];
             if (name != null && name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) { args.Context.AddString($"ERROR: invalid-argument: '{name}' is not a valid file name"); return; }
             if (recorder.StartRecording(name)) args.Context.AddString("OK: " + recorder.StatusLine);
-            else args.Context.AddString("ERROR: unavailable: Cannot start recording while a replay or save is active. " + recorder.StatusLine);
+            else args.Context.AddString("ERROR: unavailable: Recording needs a loaded world with no replay or save running. " + recorder.StatusLine);
         }
 
         private static void RunReplay(Terminal.ConsoleEventArgs args)

@@ -69,6 +69,13 @@ namespace cameraTools.Replay
                 return false;
             }
 
+            // In the main menu there is nothing to record, and the take would carry into the next world.
+            if (ZNetScene.instance == null || Player.m_localPlayer == null)
+            {
+                cameraToolsPlugin.TemplateLogger.LogWarning("Cannot record without a loaded world!");
+                return false;
+            }
+
             RecordingName = name ?? DateTime.Now.ToString("yyyy-MM-dd_HHmmss");
 
             _currentReplay = new ReplayFile
