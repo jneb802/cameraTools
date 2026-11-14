@@ -4,7 +4,9 @@ Valheim client-side camera helpers for build recording, screenshots, and replay 
 
 ## Panel
 
-Press `F6` to open the camera tools panel. The panel can:
+Press `F6` to show or hide the Camera Tools window. It has two tabs, and `F6` hides the whole window at once without changing the camera, the playback or any setting in it.
+
+While a replay plays, the window opens on its **Replay** tab: play, pause, timeline, speed, target and camera views, music, and Exit. The **Camera** tab can:
 
 - Toggle freefly.
 - Toggle HUD visibility.
@@ -20,7 +22,7 @@ These commands are regular Valheim terminal commands, so they can be run through
 
 ```text
 ct_help
-ct_ui <show|hide|toggle|status> [all|camera|replay]
+ct_ui <show|hide|toggle|status> [camera|replay]
 ct_freefly <on|off|toggle|status>
 ct_hud <show|hide|toggle|status>
 ct_follow <on|off|toggle|status>
@@ -77,7 +79,8 @@ ct_replay exit               # ACCEPTED; poll until state=menu
 
 | Panel | Control | Command |
 |---|---|---|
-| Camera | F6 show/hide | `ct_ui show\|hide\|toggle camera` |
+| Window | F6 show/hide | `ct_ui show\|hide\|toggle` |
+| Window | Camera and Replay tabs | `ct_ui show camera`, `ct_ui show replay` |
 | Camera | Free Fly | `ct_freefly on\|off` |
 | Camera | Show HUD | `ct_hud show\|hide` |
 | Camera | Player Follows Camera | `ct_follow on\|off` |
@@ -87,7 +90,7 @@ ct_replay exit               # ACCEPTED; poll until state=menu
 | Camera | Prepare | `ct_prepare` |
 | Camera | Orbit 360 / Stop Orbit | `ct_orbit start 20 360` / `ct_orbit stop` |
 | Camera | Screenshot | `ct_screenshot [filename]` |
-| Replay | Panel show/hide | `ct_ui show\|hide replay`, `ct_replay ui show\|hide` |
+| Replay | Show the window on the Replay tab | `ct_replay ui show` |
 | Replay | Time, duration, Playing/Paused | `ct_replay status` |
 | Replay | Timeline slider | `ct_replay seek <seconds>` |
 | Replay | Play / Pause | `ct_replay play`, `ct_replay pause` |
@@ -162,7 +165,7 @@ A recording holds:
 
 ### Watching a recording
 
-Open **Replays** on the main menu, pick a recording and press **Watch**. The game opens it on its own: no character, no original world and no travel. It starts paused at the first frame from the recorded camera. The panel (Ctrl+F1 for the cursor) plays, pauses, scrubs and changes speed, and the camera can fly freely, lock its aim on a target, attach to it, or follow the **Recorded camera**. **Back to menu** closes it.
+Open **Replays** on the main menu, pick a recording and press **Watch**. The game opens it on its own: no character, no original world and no travel. It starts paused at the first frame from the recorded camera. The Replay tab of the Camera Tools window (Ctrl+F1 for the cursor, `F6` to hide it for a clean view) plays, pauses, scrubs and changes speed, and the camera can fly freely, lock its aim on a target, attach to it, or follow the **Recorded camera**. **Back to menu** closes it.
 
 The replay session is a temporary world that nothing can change or save:
 

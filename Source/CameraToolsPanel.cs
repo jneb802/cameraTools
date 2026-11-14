@@ -1,22 +1,48 @@
+using cameraTools.Replay;
 using UnityEngine;
 
 namespace cameraTools
 {
-    public class FreeFlyPanel : MonoBehaviour
+    /// <summary>
+    /// The one cameraTools window: a Camera tab and, while a replay plays, a Replay tab. F6 shows and hides
+    /// the whole window; hiding it changes no camera, playback or control state.
+    /// </summary>
+    public class CameraToolsPanel : MonoBehaviour
     {
-        /// <summary>Draws the 9:16 crop lines; set by the panel toggle and ct_frame.</summary>
+        public enum PanelTab { Camera, Replay }
+
+        public static bool Visible;
+        public static PanelTab Tab = PanelTab.Camera;
+        private static bool _visibleBeforeReplay;
+        /// <summary>Draws the 9:16 crop lines; set by the Camera tab toggle and ct_frame.</summary>
         public static bool FrameGuide;
         private Rect _windowRect;
         private string _smoothnessText = "0.5";
         private const int WindowId = 98234;
+        private const float Width = 600f;
         private Texture2D? _lineTexture;
         private const float LineWidth = 2f;
         private string _lastAction = "";
+        private readonly ReplayControls _replay = new();
+
+        /// <summary>A starting replay opens the window on its Replay tab.</summary>
+        internal static void OnReplayStarted()
+        {
+            _visibleBeforeReplay = Visible;
+            Visible = true;
+            Tab = PanelTab.Replay;
+        }
+
+        /// <summary>A stopped replay returns the window to the Camera tab and to the visibility it had before.</summary>
+        internal static void OnReplayStopped()
+        {
+            Visible = _visibleBeforeReplay;
+            Tab = PanelTab.Camera;
+        }
 
         private void Start()
         {
-            float y = (Screen.height - 620f) / 2f;
-            _windowRect = new Rect(20f, y, 480f, 620f);
+            _windowRect = new Rect(20f, Screen.height - 640f, Width, 0f);
 
             _lineTexture = new Texture2D(1, 1);
             _lineTexture.SetPixel(0, 0, new Color(1f, 0f, 0f, 0.8f));
@@ -27,8 +53,8 @@ namespace cameraTools
         {
             if (cameraToolsPlugin.PanelToggleKey.Value.IsDown())
             {
-                CameraPanelStyle.CameraVisible = !CameraPanelStyle.CameraVisible;
-                cameraToolsPlugin.TemplateLogger.LogDebug(CameraPanelStyle.CameraVisible ? "Camera Tools panel opened" : "Camera Tools panel closed");
+                Visible = !Visible;
+                cameraToolsPlugin.TemplateLogger.LogDebug(Visible ? "Camera Tools panel opened" : "Camera Tools panel closed");
             }
         }
 
@@ -43,24 +69,46 @@ namespace cameraTools
                 GUI.DrawTexture(new Rect(rightX, 0, LineWidth, Screen.height), _lineTexture);
             }
 
-            if (!CameraPanelStyle.CameraVisible || GameCamera.m_instance == null)
+            if (!Visible || GameCamera.m_instance == null)
                 return;
 
             GUISkin previous = GUI.skin;
             GUI.skin = CameraPanelStyle.Skin;
             try
             {
-                _windowRect = GUILayout.Window(WindowId, _windowRect, DrawWindow, "Camera Tools", GUILayout.Width(480));
+                _windowRect.height = 0;
+                _windowRect = GUILayout.Window(WindowId, _windowRect, DrawWindow, "Camera Tools", GUILayout.Width(Width));
                 _windowRect = CameraPanelStyle.Clamp(_windowRect);
-                CameraPanelStyle.CameraRect = _windowRect;
+                CameraPanelStyle.PanelRect = _windowRect;
             }
             finally { GUI.skin = previous; }
         }
 
         private void DrawWindow(int id)
         {
-            GUILayout.Space(4f);
+            if (!ReplayPlayer.IsPlaying) Tab = PanelTab.Camera;
+            GUILayout.BeginHorizontal();
+            TabButton("Camera", PanelTab.Camera);
+            GUI.enabled = ReplayPlayer.IsPlaying;
+            TabButton(ReplayPlayer.IsPlaying ? "Replay" : "Replay (not playing)", PanelTab.Replay);
+            GUI.enabled = true;
+            GUILayout.EndHorizontal();
+            GUILayout.Space(6f);
 
+            if (Tab == PanelTab.Replay) _replay.Draw();
+            else DrawCamera();
+
+            GUILayout.Label("F6: hide • Ctrl+F1: release/capture cursor • Drag the title to move");
+            GUI.DragWindow(new Rect(0, 0, _windowRect.width, 40));
+        }
+
+        private static void TabButton(string label, PanelTab tab)
+        {
+            if (GUILayout.Toggle(Tab == tab, label, GUI.skin.button) && Tab != tab) Tab = tab;
+        }
+
+        private void DrawCamera()
+        {
             // Free fly toggle
             bool isFreeFly = GameCamera.InFreeFly();
             bool toggled = GUILayout.Toggle(isFreeFly, "Free Fly");
@@ -174,14 +222,11 @@ namespace cameraTools
             {
                 GUILayout.Label(_lastAction);
             }
-
-            GUILayout.Label("Ctrl+F1: release/capture cursor. Drag the title to move this panel.");
-            GUI.DragWindow(new Rect(0, 0, _windowRect.width, 40));
         }
 
         private void OnDestroy()
         {
-            CameraPanelStyle.CameraVisible = false;
+            Visible = false;
             if (_lineTexture != null)
                 Destroy(_lineTexture);
         }

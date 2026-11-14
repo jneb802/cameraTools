@@ -19,7 +19,7 @@ namespace cameraTools
             "'ERROR: invalid-argument:' bad input, nothing changed; 'ERROR: unavailable:' not possible in this game state, nothing changed.",
             "Coordinates are Valheim world meters (x y z). Times are seconds. Actors are user:id from ct_replay targets.",
             "ct_help - this reference.",
-            "ct_ui <show|hide|toggle|status> [all|camera|replay] - panel visibility (F6). The replay panel shows only while a replay plays.",
+            "ct_ui <show|hide|toggle|status> [camera|replay] - the Camera Tools window (F6) and its tab. The Replay tab exists only while a replay plays.",
             "ct_freefly <on|off|toggle|status> - free camera. Needs a loaded world or replay.",
             "ct_hud <show|hide|toggle|status> - game HUD.",
             "ct_follow <on|off|toggle|status> - the player follows the free camera.",
@@ -44,7 +44,7 @@ namespace cameraTools
             "ct_replay view [user:id] <aim|attach|front|third|projectile> - aim at or attach the camera to the target. ct_replay detach - free camera.",
             "ct_replay find [user:id] - pause and seek to where the target first appears.",
             "ct_replay recorded [on|off|status] - follow the camera used while recording. ct_replay follow <user:id> <x> <y> <z> [local] - fixed offset.",
-            "ct_replay music [index] | volume <0-1> - replay music. ct_replay ui [show|hide|toggle|status] - replay panel.",
+            "ct_replay music [index] | volume <0-1> - replay music. ct_replay ui [show|hide|toggle|status] - the window on its Replay tab.",
             "ct_replay media - recorded effects, sounds and deaths. ct_replay exit - leave the replay (session: ACCEPTED, poll state until menu).",
             "ct_replay events [death|attack|damage] [user:id] - timestamped event tags of the playing replay.",
             "replay events <file> - writes <file>.events.json next to the recording (ACCEPTED; repeat until OK). New takes write it when they save."
@@ -57,17 +57,18 @@ namespace cameraTools
                 foreach (string line in Reference) args.Context.AddString(line);
             });
 
-            Command("ct_ui", "Panel visibility: ct_ui <show|hide|toggle|status> [all|camera|replay]", args =>
+            Command("ct_ui", "Window visibility and tab: ct_ui <show|hide|toggle|status> [camera|replay]", args =>
             {
                 string mode = args.Length > 1 ? args[1].ToLowerInvariant() : "status";
-                string panel = args.Length > 2 ? args[2].ToLowerInvariant() : "all";
-                if (panel != "all" && panel != "camera" && panel != "replay") throw new ArgumentException("Use all, camera or replay");
-                if (mode != "status")
+                if (mode != "status") CameraToolsPanel.Visible = CommandText.Switch(mode, CameraToolsPanel.Visible);
+                if (args.Length > 2)
                 {
-                    if (panel != "replay") CameraPanelStyle.CameraVisible = CommandText.Switch(mode, CameraPanelStyle.CameraVisible);
-                    if (panel != "camera") ReplayTimelinePanel.Visible = CommandText.Switch(mode, ReplayTimelinePanel.Visible);
+                    string tab = args[2].ToLowerInvariant();
+                    if (tab == "replay" && !ReplayPlayer.IsPlaying) throw new InvalidOperationException("The Replay tab exists only while a replay plays");
+                    if (tab != "camera" && tab != "replay") throw new ArgumentException("Use camera or replay");
+                    CameraToolsPanel.Tab = tab == "replay" ? CameraToolsPanel.PanelTab.Replay : CameraToolsPanel.PanelTab.Camera;
                 }
-                return $"camera={CameraPanelStyle.CameraVisible} replay={ReplayTimelinePanel.Visible} replayShown={ReplayPlayer.IsPlaying && ReplayTimelinePanel.Visible}";
+                return $"panel={CameraToolsPanel.Visible} tab={CameraToolsPanel.Tab.ToString().ToLowerInvariant()} replayTab={ReplayPlayer.IsPlaying}";
             });
 
             Command("ct_follow", "Player follows the free camera: ct_follow <on|off|toggle|status>", args =>
@@ -85,8 +86,8 @@ namespace cameraTools
 
             Command("ct_frame", "9:16 crop guide: ct_frame <on|off|toggle|status>", args =>
             {
-                if (args.Length > 1 && args[1].ToLowerInvariant() != "status") FreeFlyPanel.FrameGuide = CommandText.Switch(args[1], FreeFlyPanel.FrameGuide);
-                return $"frameGuide={FreeFlyPanel.FrameGuide}";
+                if (args.Length > 1 && args[1].ToLowerInvariant() != "status") CameraToolsPanel.FrameGuide = CommandText.Switch(args[1], CameraToolsPanel.FrameGuide);
+                return $"frameGuide={CameraToolsPanel.FrameGuide}";
             });
 
             new Terminal.ConsoleCommand("ct_settings", "cameraTools config: ct_settings list | get <Section.Key> | set <Section.Key> <value>", args =>

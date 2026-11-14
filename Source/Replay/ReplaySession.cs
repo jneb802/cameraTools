@@ -115,7 +115,6 @@ namespace cameraTools.Replay
             if (Spawned) return;
             Spawned = true;
             CreativeZoneCameraController.SetHudVisible(false);
-            ReplayTimelinePanel.Visible = true;
             CreativeZoneCameraController.SetFreeFly(true);
             CreativeZoneCameraController.ApplyExternalTransform(StartPosition, Replay!.Info.StartRotation);
             ReplayPlayer.Instance.StartPlayback(Replay, true);

@@ -173,6 +173,7 @@ namespace cameraTools.Replay
             }
 
             IsPlaying = true;
+            CameraToolsPanel.OnReplayStarted();
 
             // Auto-enter free fly mode
             if (!GameCamera.InFreeFly() && GameCamera.m_instance != null)
@@ -211,6 +212,7 @@ namespace cameraTools.Replay
             _hidden.Clear();
             IsPlaying = false;
             _paused = false;
+            CameraToolsPanel.OnReplayStopped();
 
             cameraToolsPlugin.TemplateLogger.LogInfo("Replay stopped");
         }
