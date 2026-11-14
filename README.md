@@ -30,8 +30,8 @@ ct_screenshot [filename]
 ct_mark <tool|pick <mark>|list [kind|all]|build [list|new <name>|use <id|name>]|return|show|hide|auto|export|reload|clear [kind]|remove <id|label>|goto <id|label>|shot <label>|point <label> [x y z]>
 ct_path <list|play <id|label> [duration] [waypoints|forward|look x y z]|stop|status|preview <id|label>>
 record [name] | record stop | record status
-replay <name> | replay list | replay exit
-ct_replay status|media|targets|pause|play|seek <seconds>|speed <0.1-4>|detach|recorded|follow <user:id> <x> <y> <z> [local]|view <user:id> <aim|attach|front|third|projectile>|music [index]|ui|exit
+replay <name> | replay list | replay events <name> | replay exit
+ct_replay status|media|targets|events [death|attack|damage] [user:id]|pause|play|seek <seconds>|speed <0.1-4>|detach|recorded|follow <user:id> <x> <y> <z> [local]|view <user:id> <aim|attach|front|third|projectile>|music [index]|ui|exit
 ```
 
 ## Markers
@@ -98,6 +98,23 @@ The replay session is a temporary world that nothing can change or save:
 The browser lists the mods the recording used. Objects, creatures and effects from a mod that is not loaded are left out, and the panel names them. A recording made in another game version still opens; objects whose data changed between versions can look different.
 
 Only what your game had loaded is in a recording; beyond about 150 m to 300 m, depending on your view settings, you see bare terrain. Recordings made before cameraTools saved surroundings play with `replay <name>` inside their own world, laid over the loaded world.
+
+### Event tags
+
+Every recording carries timestamped tags an agent can read without screenshots. Times are seconds from the start of the replay, the clock `ct_replay seek` uses; a tag is within 0.25 s of the moment it shows in playback.
+
+| Type | Meaning |
+|---|---|
+| `death` | The actor died: the recording game ran its death, or its synced health reached zero. One per actor. |
+| `attack_start` | The actor started an attack: the game triggered a weapon or creature attack animation. A combo has one per swing. |
+| `damage_taken` | The actor's synced health dropped between two samples (30 per second). `amount` is the drop and `health` what remains. |
+
+Each tag names the actor as `user:id` (the id `ct_replay targets` and `ct_replay view` use), its prefab and a readable name.
+
+- `ct_replay events [death|attack|damage] [user:id]` lists the tags of the playing replay.
+- Saving a take also writes `<name>.events.json` next to it. `replay events <name>` writes that file for any recording, including older ones; it reads the file in the background, so repeat it until it reports `OK`.
+
+Older recordings stay readable. Files before version 9 have no health samples, so `damage_taken` is reported unavailable with the reason; their attacks are read from the saved animation triggers, and their deaths include only characters the recording game simulated. Files before version 6 have no deaths.
 
 ## Build
 
