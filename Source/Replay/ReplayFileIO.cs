@@ -47,6 +47,7 @@ namespace cameraTools.Replay
             w.Write(replay.Duration);
             w.Write(replay.Frames.Count);
             w.Write(replay.TriggerEvents.Count);
+            ReplayPaths paths = new ReplayPaths();
 
             // Frames
             foreach (var frame in replay.Frames)
@@ -86,10 +87,7 @@ namespace cameraTools.Replay
                     {
                         foreach (BonePose bone in e.Pose)
                         {
-                            w.Write(bone.Path);
-                            w.Write(bone.Position.x); w.Write(bone.Position.y); w.Write(bone.Position.z);
-                            w.Write(bone.Rotation.x); w.Write(bone.Rotation.y); w.Write(bone.Rotation.z); w.Write(bone.Rotation.w);
-                            w.Write(bone.Scale.x); w.Write(bone.Scale.y); w.Write(bone.Scale.z);
+                            paths.WritePose(w, bone);
                         }
                     }
                     // Equipment (version 3+; item hashes as int since version 4)
@@ -142,7 +140,7 @@ namespace cameraTools.Replay
                 w.Write(we.HealthFraction);
                 w.Write(we.State);
             }
-            ReplayMediaIO.Write(w, replay);
+            ReplayMediaIO.Write(w, replay, paths);
             SceneIO.Write(w, replay);
         }
 
@@ -234,6 +232,7 @@ namespace cameraTools.Replay
             replay.Duration = r.ReadSingle();
             int frameCount = r.ReadInt32();
             int triggerCount = r.ReadInt32();
+            ReplayPaths? paths = version >= 8 ? new ReplayPaths() : null;
 
             // Frames
             for (int f = 0; f < frameCount; f++)
@@ -269,7 +268,7 @@ namespace cameraTools.Replay
                             throw new InvalidDataException("Invalid pose count");
                         snapshot.Pose = new System.Collections.Generic.List<BonePose>(boneCount);
                         for (int bone = 0; bone < boneCount; bone++)
-                            snapshot.Pose.Add(new BonePose
+                            snapshot.Pose.Add(paths != null ? paths.ReadPose(r) : new BonePose
                             {
                                 Path = r.ReadString(),
                                 Position = new UnityEngine.Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle()),
@@ -334,7 +333,7 @@ namespace cameraTools.Replay
                 }
             }
 
-            if (version >= 6) ReplayMediaIO.Read(r, replay);
+            if (version >= 6) ReplayMediaIO.Read(r, replay, paths);
             if (version >= 7) SceneIO.Read(r, replay);
         }
 
