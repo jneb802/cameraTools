@@ -58,11 +58,29 @@ namespace cameraTools.Replay
         private double _slowestWork;
         private string _slowestWorkKind = "none";
         private int _gcSlices;
+        private static bool _prepared;
 
-        internal SceneRecorder(ReplayFile file)
+        internal SceneRecorder(ReplayFile file, bool activate = true)
         {
             _file = file;
-            Active = this;
+            if (activate) Active = this;
+        }
+
+        internal static void Prepare()
+        {
+            if (_prepared || Active != null || Player.m_localPlayer == null || ZNetScene.instance == null) return;
+            // Exercise serialization and its first-use runtime setup after world loading, before a take.
+            // This recorder never subscribes to events or changes the live object.
+            SceneRecorder preparation = new(new ReplayFile(), false);
+            foreach (KeyValuePair<ZDO, ZNetView> instance in ZNetScene.instance.m_instances)
+            {
+                ZDO zdo = instance.Key;
+                if (!zdo.Persistent || !preparation.IsScene(zdo.GetPrefab())) continue;
+                long bytes = 0;
+                preparation.Observe(zdo, 0f, true, ref bytes);
+                _prepared = true;
+                break;
+            }
         }
 
         internal void Update(float time, ref long bytes)

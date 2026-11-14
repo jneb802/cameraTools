@@ -156,7 +156,10 @@ namespace cameraTools.Replay
         {
             CompleteSave();
             if (!IsRecording || _currentReplay == null)
+            {
+                if (!ReplaySession.Active) SceneRecorder.Prepare();
                 return;
+            }
 
             if (ZNetScene.instance == null)
                 return;
