@@ -57,6 +57,7 @@ namespace cameraTools
             gameObject.AddComponent<PathPlayer>();
             CreativeZoneCameraController.RegisterCommands();
             ReplayCommands.Register();
+            SceneRecorder.Prepare();
             MarkerCommands.Register();
         }
 
