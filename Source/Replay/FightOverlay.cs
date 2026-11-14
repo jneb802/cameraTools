@@ -55,8 +55,19 @@ namespace cameraTools.Replay
 
         private void OnDestroy() => Camera.onPostRender -= Draw;
 
+        // The game creates world objects near the camera over several frames (after a seek, or when the camera moves);
+        // lines laid before then miss floors and rocks. Lay them again once the object count has been steady briefly.
+        private int _seenObjects = -1;
+        private float _relayAt = -1f;
+
         private void LateUpdate()
         {
+            if (ReplayPlayer.IsPlaying && GridOn && ZNetScene.instance != null)
+            {
+                int objects = ZNetScene.instance.m_instances.Count;
+                if (objects != _seenObjects) { _seenObjects = objects; _relayAt = Time.realtimeSinceStartup + 0.75f; }
+                if (_relayAt > 0f && Time.realtimeSinceStartup >= _relayAt) { _relayAt = -1f; _built = ""; Rebuild(); }
+            }
             bool show = ReplayPlayer.IsPlaying && !Hidden && (GridOn || TrailsOn);
             foreach (TextMeshPro label in _labels) if (label != null && label.gameObject.activeSelf != show) label.gameObject.SetActive(show);
             if (!ReplayPlayer.IsPlaying && _built.Length > 0) Clear();
