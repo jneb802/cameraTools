@@ -115,7 +115,7 @@ namespace cameraTools.Replay
     public class ReplayFile
     {
         public const string Magic = "VRPL";
-        public const int Version = 7;
+        public const int Version = 8;
 
         public ReplayInfo Info = new();
         public byte[] Thumbnail = System.Array.Empty<byte>();
