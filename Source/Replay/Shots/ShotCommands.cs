@@ -9,7 +9,7 @@ namespace cameraTools.Replay.Shots
     /// <summary>Console commands for shots, the fight guides, the overhead map and field of view.</summary>
     internal static class ShotCommands
     {
-        internal const string ShotUsage = "ct_shot play <file> [from] | stop | status | check <file> [aspect] | preview <file> [times...|count N] [--overlays] | " +
+        internal const string ShotUsage = "ct_shot play <file> [from] | stop | status | check <file> [aspect] [--pixels [rate]] | preview <file> [times...|count N] [--strip N] [--size WxH] [--overlays] | solve <intent> [--no-pixels] [--keep N] | measure <render> | " +
             "render <file> [--fps N] [--size WxH] [--supersample N] [--video] [--keep-frames] [--no-audio] [--fps-cap N] | render status | render cancel | render-all <folder> [options] | new <name> | key [time] | save [name]";
 
         internal static void Register()
@@ -30,24 +30,60 @@ namespace cameraTools.Replay.Shots
                                 args.Length > 3 ? CommandText.Number(args[3], 0f, 100000f, "Start time") : null));
                             return;
                         case "check":
-                            float aspect = args.Length > 3 ? CommandText.Number(args[3], 0.2f, 5f, "Aspect") : Screen.width / (float)Mathf.Max(1, Screen.height);
-                            foreach (string line in shots.Check(ShotPlayer.Resolve(CommandText.Arg(args, 2, "ct_shot check <file> [aspect]")), aspect).Split('\n')) args.Context.AddString(line);
-                            return;
-                        case "preview":
                         {
-                            string path = ShotPlayer.Resolve(CommandText.Arg(args, 2, "ct_shot preview <file> [times...|count N] [--overlays]"));
-                            List<float> times = new();
-                            int count = 4;
-                            bool overlays = false;
+                            string path = ShotPlayer.Resolve(CommandText.Arg(args, 2, "ct_shot check <file> [aspect] [--pixels [rate]] [--pixels-debug]"));
+                            float aspect = Screen.width / (float)Mathf.Max(1, Screen.height);
+                            float? rate = null;
+                            bool debug = false;
                             for (int index = 3; index < args.Length; index++)
                             {
-                                if (args[index] == "--overlays") overlays = true;
-                                else if (args[index] == "count") count = (int)CommandText.Number(CommandText.Arg(args, ++index, "count N"), 1, 60, "Count");
-                                else times.Add(CommandText.Number(args[index], 0f, 100000f, "Preview time"));
+                                if (args[index] == "--pixels")
+                                {
+                                    rate = 10f;
+                                    if (index + 1 < args.Length && !args[index + 1].StartsWith("--")) rate = CommandText.Number(args[++index], 0.5f, 60f, "Pixel samples a second");
+                                }
+                                else if (args[index] == "--pixels-debug") { debug = true; rate ??= 10f; }
+                                else aspect = CommandText.Number(args[index], 0.2f, 5f, "Aspect");
                             }
-                            args.Context.AddString(shots.Preview(path, times, count, overlays));
+                            if (rate.HasValue) { args.Context.AddString(shots.CheckPixels(path, aspect, rate.Value, debug)); return; }
+                            foreach (string line in shots.Check(path, aspect).Split('\n')) args.Context.AddString(line);
                             return;
                         }
+                        case "preview":
+                        {
+                            string path = ShotPlayer.Resolve(CommandText.Arg(args, 2, "ct_shot preview <file> [times...|count N] [--strip N] [--size WxH] [--overlays]"));
+                            List<float> times = new();
+                            ShotPlayer.PreviewOptions options = new();
+                            for (int index = 3; index < args.Length; index++)
+                            {
+                                if (args[index] == "--overlays") options.Overlays = true;
+                                else if (args[index] == "count") options.Count = (int)CommandText.Number(CommandText.Arg(args, ++index, "count N"), 1, 60, "Count");
+                                else if (args[index] == "--strip") options.Strip = (int)CommandText.Number(CommandText.Arg(args, ++index, "--strip N"), 1, 60, "Strip stills");
+                                else if (args[index] == "--size") (options.Width, options.Height) = Size(CommandText.Arg(args, ++index, "--size WxH"));
+                                else times.Add(CommandText.Number(args[index], 0f, 100000f, "Preview time"));
+                            }
+                            if (options.Strip == 0 && args.Args.Contains("--size")) options.Strip = Mathf.Max(1, times.Count == 0 ? options.Count : times.Count);
+                            args.Context.AddString(shots.Preview(path, times, options));
+                            return;
+                        }
+                        case "solve":
+                        {
+                            string path = ShotPlayer.Resolve(CommandText.Arg(args, 2, "ct_shot solve <intent file> [--no-pixels] [--keep N]"));
+                            bool usePixels = true;
+                            int keep = 0;
+                            for (int index = 3; index < args.Length; index++)
+                            {
+                                if (args[index] == "--no-pixels") usePixels = false;
+                                else if (args[index] == "--keep") keep = (int)CommandText.Number(CommandText.Arg(args, ++index, "--keep N"), 1, 10, "Shots to keep");
+                                else throw new ArgumentException($"Unknown solve option {args[index]}");
+                            }
+                            args.Context.AddString(shots.Solve(path, usePixels, keep));
+                            return;
+                        }
+                        case "measure":
+                            args.Context.AddString(shots.Measure(CommandText.Arg(args, 2, "ct_shot measure <render folder or .render.json> [aspect]"),
+                                args.Length > 3 ? CommandText.Number(args[3], 0.2f, 5f, "Aspect") : (float?)null));
+                            return;
                         case "render":
                         {
                             string target = CommandText.Arg(args, 2, "ct_shot render <file> [options] | render status | render cancel");
@@ -68,7 +104,7 @@ namespace cameraTools.Replay.Shots
                     }
                 }
                 catch (Exception error) { args.Context.AddString(CommandText.Error(error)); }
-            }, optionsFetcher: () => new List<string> { "play", "stop", "status", "check", "preview", "render", "render-all", "new", "key", "save" });
+            }, optionsFetcher: () => new List<string> { "play", "stop", "status", "check", "preview", "solve", "measure", "render", "render-all", "new", "key", "save" });
 
             Command("ct_fov", "Field of view: ct_fov [degrees|reset]", args =>
             {
@@ -135,16 +171,18 @@ namespace cameraTools.Replay.Shots
                     case "--no-audio": options.Audio = false; break;
                     case "--overlays": options.Overlays = true; break;
                     case "--fps-cap": options.FpsCap = (int)CommandText.Number(CommandText.Arg(args, ++index, "--fps-cap N"), 5, 1000, "Frame rate cap"); break;
-                    case "--size":
-                        string[] size = CommandText.Arg(args, ++index, "--size WxH").ToLowerInvariant().Split('x');
-                        if (size.Length != 2) throw new ArgumentException("--size is WIDTHxHEIGHT, like 1920x1080");
-                        options.Width = (int)CommandText.Number(size[0], 320, 7680, "Width");
-                        options.Height = (int)CommandText.Number(size[1], 240, 4320, "Height");
-                        break;
+                    case "--size": (options.Width, options.Height) = Size(CommandText.Arg(args, ++index, "--size WxH")); break;
                     default: throw new ArgumentException($"Unknown render option {args[index]}");
                 }
             }
             return options;
+        }
+
+        private static (int Width, int Height) Size(string text)
+        {
+            string[] size = text.ToLowerInvariant().Split('x');
+            if (size.Length != 2) throw new ArgumentException("--size is WIDTHxHEIGHT, like 1920x1080");
+            return ((int)CommandText.Number(size[0], 160, 7680, "Width"), (int)CommandText.Number(size[1], 90, 4320, "Height"));
         }
 
         private static void Command(string name, string usage, Func<Terminal.ConsoleEventArgs, string> body)
