@@ -43,6 +43,17 @@ namespace cameraTools.Replay
         private ReplayEventList? _events;
         /// <summary>The loaded recording's event tags, built once per playback.</summary>
         internal ReplayEventList Events => _events ??= ReplayEvents.Build(_replay ?? throw new InvalidOperationException("Start a replay first"), ReplayEvents.AttackAnimations());
+        private ReplayTracks? _tracks;
+        /// <summary>Every recorded entity's samples, built once per playback.</summary>
+        internal ReplayTracks Tracks => _tracks ??= new ReplayTracks(_replay ?? throw new InvalidOperationException("Start a replay first"));
+        internal ReplayFile File => _replay ?? throw new InvalidOperationException("Start a replay first");
+        /// <summary>The file the playing replay was read from.</summary>
+        internal string? FilePath => _replay?.SourcePath;
+        private List<Highlight>? _highlights;
+        internal List<Highlight> Highlights => _highlights ??= FilePath != null ? Replay.Highlights.Load(FilePath) : new List<Highlight>();
+        internal void InvalidateHighlights() => _highlights = null;
+        /// <summary>When set, a shot drives the replay clock instead of real time and the speed control.</summary>
+        internal Func<float, float>? Clock;
         public ReplayCameraRig? CameraRig { get; private set; }
         public ReplayMusic? Music { get; private set; }
         private (long, uint)? _cameraTarget;
@@ -108,6 +119,18 @@ namespace cameraTools.Replay
             Instance = this;
         }
 
+        private void Update()
+        {
+            // H (configurable) tags the moment; the game's text prompt asks for an optional label.
+            if (!IsPlaying || !cameraToolsPlugin.HighlightKey.Value.IsDown() || Console.IsVisible() || TextInput.IsVisible() || FilePath == null) return;
+            if (TextInput.instance != null) TextInput.instance.RequestText(new HighlightPrompt(), "Highlight label (optional)", 60);
+            else
+            {
+                try { Replay.Highlights.Add(""); }
+                catch (Exception error) { cameraToolsPlugin.TemplateLogger.LogWarning("Highlight not saved: " + error.Message); }
+            }
+        }
+
         public void FollowRecordedCamera()
         {
             if (!IsPlaying) throw new InvalidOperationException("Start a replay first");
@@ -140,6 +163,9 @@ namespace cameraTools.Replay
 
             _replay = replay;
             _events = null;
+            _tracks = null;
+            _highlights = null;
+            Clock = null;
             _ghostManager = new GhostManager(replay.Info);
             _media = new ReplayMediaPlayer(replay);
             CameraRig = new ReplayCameraRig(replay);
@@ -205,6 +231,9 @@ namespace cameraTools.Replay
             _ghostManager = null;
             _replay = null;
             _events = null;
+            _tracks = null;
+            _highlights = null;
+            Clock = null;
             _activeEntities.Clear();
             _cameraTarget = null;
             foreach (Renderer renderer in _hidden.Keys)
@@ -251,7 +280,8 @@ namespace cameraTools.Replay
                 return;
 
             // Advance time
-            if (!_paused)
+            if (Clock != null) _playbackTime = Mathf.Clamp(Clock(Time.unscaledDeltaTime), 0f, _replay.Duration);
+            else if (!_paused)
             {
                 _playbackTime += Time.deltaTime * _playbackSpeed;
                 if (_playbackTime >= _replay.Duration)

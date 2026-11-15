@@ -18,7 +18,7 @@ namespace cameraTools.Replay
         public string State => IsSaving ? "saving" : IsRecording ? "recording" : "idle";
         /// <summary>One line an agent can parse: state is idle, recording or saving.</summary>
         public string StatusLine => IsSaving ? $"state=saving name={RecordingName}" : IsRecording
-            ? $"state=recording name={RecordingName} seconds={Time.time - _recordStartTime:F1} estimatedMiB={_estimatedBytes / (1024f * 1024f):F1} budgetMiB={cameraToolsPlugin.ReplayMemoryBudgetMiB.Value} maximumSeconds=600"
+            ? $"state=recording name={RecordingName} rate={SampleRate} seconds={Time.time - _recordStartTime:F1} estimatedMiB={_estimatedBytes / (1024f * 1024f):F1} budgetMiB={cameraToolsPlugin.ReplayMemoryBudgetMiB.Value} maximumSeconds=600"
             : $"state=idle last={(RecordingName.Length > 0 ? RecordingName : "none")} result=\"{_stopReason.Trim()}\"";
 
         private const int ZdoSalt = 438569;
@@ -54,7 +54,10 @@ namespace cameraTools.Replay
             Instance = this;
         }
 
-        public bool StartRecording(string? name = null)
+        /// <summary>Samples per second of the take in progress or the next one.</summary>
+        public int SampleRate { get; private set; } = 30;
+
+        public bool StartRecording(string? name = null, int? rate = null)
         {
             CompleteSave();
             if (IsSaving) return false;
@@ -78,10 +81,14 @@ namespace cameraTools.Replay
             }
 
             RecordingName = name ?? DateTime.Now.ToString("yyyy-MM-dd_HHmmss");
+            SampleRate = rate ?? cameraToolsPlugin.ReplaySampleRate.Value;
 
+            ZDOID recorder = Player.m_localPlayer.GetZDOID();
             _currentReplay = new ReplayFile
             {
-                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                SampleRate = SampleRate,
+                Recorder = (recorder.UserID, recorder.ID)
             };
             _pendingTriggers.Clear();
             _recordStartTime = Time.time;
@@ -127,12 +134,15 @@ namespace cameraTools.Replay
             _scene = null;
             _bones.Clear();
             _actors.Clear();
-            _saveSummary = $"Recording saved: {RecordingName}.valreplay ({completed.Frames.Count} frames, {completed.Duration:F1}s, {completed.Scene.Count} world objects, {completed.Terrain.Count} zones, {completed.Effects.Count} effects, {completed.Sounds.Count} sounds, {completed.Deaths.Count} deaths, {completed.Attacks.Count} attacks, {completed.Damage.Count} damage samples)";
+            _saveSummary = $"Recording saved: {RecordingName}.valreplay ({completed.Frames.Count} frames, {completed.Duration:F1}s, {completed.Scene.Count} world objects, {completed.Terrain.Count} zones, {completed.Effects.Count} effects, {completed.Sounds.Count} sounds, {completed.Deaths.Count} deaths, {completed.Attacks.Count} attacks, {completed.Damage.Count} damage samples, {completed.Hits.Count} hits, {completed.SampleRate} samples per second)";
+            // Sizes, sun angles and highlights come from loaded game data, so they are read here on the main thread.
+            DigestContext digest = DigestContext.Capture(completed, path);
             // Samples contain copied structs and strings, not live Unity objects.
             _saveTask = Task.Run(() =>
             {
                 ReplayFileIO.Write(path, completed);
                 ReplayEvents.WriteJson(ReplayEvents.JsonPath(path), ReplayEvents.Build(completed, null));
+                ReplayDigest.Write(ReplayDigest.JsonPath(path), completed, digest);
             });
         }
 
@@ -169,6 +179,14 @@ namespace cameraTools.Replay
             _events?.Trigger(Time.time - _recordStartTime, zdoid, triggerName);
         }
 
+        public void CaptureHit(HitEvent hit)
+        {
+            if (!IsRecording || _currentReplay == null) return;
+            hit.Time = Time.time - _recordStartTime;
+            _currentReplay.Hits.Add(hit);
+            _estimatedBytes += 120;
+        }
+
         private void LateUpdate()
         {
             CompleteSave();
@@ -183,7 +201,7 @@ namespace cameraTools.Replay
 
             float elapsed = Time.time - _recordStartTime;
             if (elapsed < _nextSample) return;
-            _nextSample = elapsed + 1f / 30f;
+            _nextSample = elapsed + 1f / SampleRate;
             if (elapsed >= 600f || _estimatedBytes >= (long)cameraToolsPlugin.ReplayMemoryBudgetMiB.Value * 1024 * 1024)
             {
                 _stopReason = elapsed >= 600f ? "Reached the 10-minute limit." : "Reached the configured recording memory budget.";
@@ -288,7 +306,24 @@ namespace cameraTools.Replay
                     snapshot.RightBackItem = visEquip.m_rightBackItem;
                 }
 
-                if (character != null) _events?.Sample(character, snapshot.ZdoUserID, snapshot.ZdoID, elapsed);
+                if (character != null)
+                {
+                    _events?.Sample(character, snapshot.ZdoUserID, snapshot.ZdoID, elapsed);
+                    if (!_currentReplay.Actors.ContainsKey((snapshot.ZdoUserID, snapshot.ZdoID)))
+                    {
+                        CombatData.Size(character.gameObject, out float height, out float radius);
+                        _currentReplay.Actors[(snapshot.ZdoUserID, snapshot.ZdoID)] = new ActorInfo
+                        {
+                            Level = character.GetLevel(), MaxHealth = character.GetMaxHealth(), Faction = character.m_faction.ToString(),
+                            IsPlayer = character.IsPlayer(), Height = height, Radius = radius
+                        };
+                    }
+                }
+                if (projectile != null && !_currentReplay.ProjectileOwners.ContainsKey((snapshot.ZdoUserID, snapshot.ZdoID)) && projectile.m_owner != null)
+                {
+                    ZDOID owner = projectile.m_owner.GetZDOID();
+                    _currentReplay.ProjectileOwners[(snapshot.ZdoUserID, snapshot.ZdoID)] = (owner.UserID, owner.ID);
+                }
                 snapshot.Visual = ReplayVisuals.Capture(nview.gameObject, ragdoll != null, ref _estimatedBytes);
                 if (_actors.Add((snapshot.ZdoUserID, snapshot.ZdoID)))
                     _currentReplay.Info.Prefabs[snapshot.PrefabHash] = Utils.GetPrefabName(nview.gameObject);

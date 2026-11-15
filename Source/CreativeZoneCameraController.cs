@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Globalization;
 using System.IO;
 using BepInEx;
@@ -145,6 +146,8 @@ namespace cameraTools
 
         private static Vector3 Horizontal(Vector3 value) => new(value.x, 0f, value.z);
 
+        internal static float ApplyEasePublic(float t, MoveEase ease) => ApplyEase(t, ease);
+
         private static float ApplyEase(float t, MoveEase ease)
         {
             return ease switch
@@ -225,12 +228,14 @@ namespace cameraTools
                 ? Vector3.Angle(camera.transform.forward, toOrigin.normalized)
                 : 0f;
 
-            return string.Join("\n", new[]
+            // One line: valheimCLI passes on only the first line of a reply.
+            return string.Join(" ", new[]
             {
                 $"freefly={GameCamera.InFreeFly()} hudVisible={!(Hud.instance != null && Hud.instance.m_userHidden)} orbiting={IsOrbiting} moving={IsMoving}",
                 $"origin={Format(origin)} camera={Format(position)}",
                 $"distance={distance:F2} horizontalDistance={horizontalDistance:F2}",
-                $"orbitAngle={NormalizeDegrees(orbitAngle):F2} targetYaw={NormalizeDegrees(targetYaw):F2} targetPitch={targetPitch:F2} aimError={aimError:F2}"
+                $"orbitAngle={NormalizeDegrees(orbitAngle):F2} targetYaw={NormalizeDegrees(targetYaw):F2} targetPitch={targetPitch:F2} aimError={aimError:F2}",
+                $"fov={camera.m_camera.fieldOfView:F2} roll={NormalizeSignedAngle(camera.transform.eulerAngles.z):F2} yaw={NormalizeDegrees(camera.transform.eulerAngles.y):F2} pitch={NormalizeSignedAngle(camera.transform.eulerAngles.x):F2}"
             });
         }
 
@@ -394,6 +399,15 @@ namespace cameraTools
             string path = Path.Combine(directory, fileName);
             ScreenCapture.CaptureScreenshot(path);
             return path;
+        }
+
+        private static System.Collections.IEnumerator HideOverlaysForCapture()
+        {
+            bool hidden = cameraTools.Replay.FightOverlay.Hidden;
+            cameraTools.Replay.FightOverlay.Hidden = true;
+            yield return new WaitForEndOfFrame();
+            yield return null;
+            cameraTools.Replay.FightOverlay.Hidden = hidden;
         }
 
         internal static Vector3 ParseOrigin(Terminal.ConsoleEventArgs args, int startIndex)
@@ -685,12 +699,15 @@ namespace cameraTools
                 }
             });
 
-            _ = new Terminal.ConsoleCommand("ct_screenshot", "Capture a PNG screenshot. Usage: ct_screenshot [filename]", args =>
+            _ = new Terminal.ConsoleCommand("ct_screenshot", "Capture a PNG screenshot. Usage: ct_screenshot [filename] [--overlays]", args =>
             {
                 try
                 {
-                    string? fileName = args.Length >= 2 ? args[1] : null;
-                    args.Context.AddString($"OK: screenshot={CaptureScreenshot(fileName)}");
+                    bool overlays = args.Args.Contains("--overlays");
+                    string? fileName = args.Args.Skip(1).FirstOrDefault(arg => arg != "--overlays");
+                    // The capture happens at the end of this frame; the replay guides stay out of it unless asked for.
+                    if (!overlays && _instance != null) _instance.StartCoroutine(HideOverlaysForCapture());
+                    args.Context.AddString($"OK: screenshot={CaptureScreenshot(fileName)} overlays={overlays}");
                 }
                 catch (Exception ex)
                 {

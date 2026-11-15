@@ -115,10 +115,12 @@ namespace cameraTools.Replay
     public class ReplayFile
     {
         public const string Magic = "VRPL";
-        public const int Version = 9;
+        public const int Version = 10;
 
         /// <summary>The format version the file was saved with; older files lack some data.</summary>
         public int FileVersion = Version;
+        /// <summary>The file this recording was read from; null for a take that has not been saved.</summary>
+        public string? SourcePath;
         public ReplayInfo Info = new();
         public byte[] Thumbnail = System.Array.Empty<byte>();
         public long Timestamp;
@@ -136,6 +138,17 @@ namespace cameraTools.Replay
         public List<SceneObject> Scene = new();
         public List<TerrainPatch> Terrain = new();
         public List<EnvironmentSample> Environment = new();
+        /// <summary>Samples per second the take was recorded at; 30 for files before version 10.</summary>
+        public float SampleRate = 30f;
+        /// <summary>The recording player's character, or (0, 0) when unknown (files before version 10).</summary>
+        public (long, uint) Recorder;
+        /// <summary>Level, health, faction and size of each recorded character (version 10 and later).</summary>
+        public Dictionary<(long, uint), ActorInfo> Actors = new();
+        /// <summary>Every hit the recording game processed (version 10 and later).</summary>
+        public List<HitEvent> Hits = new();
+        public Dictionary<(long, uint), (long, uint)> ProjectileOwners = new();
+        /// <summary>The creature AI's target when it started an attack, keyed by index into <see cref="Attacks"/>.</summary>
+        public Dictionary<int, (long, uint)> AttackTargets = new();
         public bool HasScene => Scene.Count > 0;
     }
 }

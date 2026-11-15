@@ -11,9 +11,9 @@ namespace cameraTools.Replay
 {
     public static class ReplayCommands
     {
-        internal const string ReplayUsage = "ct_replay state|status|media|targets|events [death|attack|damage] [user:id]|target [user:id]|find [user:id]|view [user:id] <aim|attach|front|third|projectile>|detach|recorded [on|off|status]|follow <user:id> <x> <y> <z> [local]|pause|play|seek <seconds>|speed <0.1-4>|music [index]|volume <0-1>|ui [show|hide|toggle|status]|exit";
-        internal const string RecordUsage = "record [name] | record start [name] | record stop | record status";
-        internal const string FileUsage = "replay <file> | replay list | replay info <file> | replay events <file> | replay folder | replay browser <open|close|status> | replay exit";
+        internal const string ReplayUsage = "ct_replay state|status|media|targets|where <user:id>|map [time|from-to] [sizeMeters] [pixels]|scene-export [margin]|digest [rate]|tag [label]|tags|untag <id>|events [death|attack|damage|hit] [user:id]|target [user:id]|find [user:id]|view [user:id] <aim|attach|front|third|projectile>|detach|recorded [on|off|status]|follow <user:id> <x> <y> <z> [local]|pause|play|seek <seconds>|speed <0.1-4>|music [index]|volume <0-1>|ui [show|hide|toggle|status]|exit";
+        internal const string RecordUsage = "record [name] | record start [name] [--rate 30|60] | record stop | record status";
+        internal const string FileUsage = "replay <file> | replay list | replay info <file> | replay events <file> | replay digest <file> [rate] | replay downsample <file> <new name> | replay folder | replay browser <open|close|status> | replay exit";
 
         public static void Register()
         {
@@ -79,6 +79,29 @@ namespace cameraTools.Replay
                             args.Context.AddString($"OK: panel={CameraToolsPanel.Visible} tab={CameraToolsPanel.Tab.ToString().ToLowerInvariant()}");
                             return;
                         case "targets": args.Context.AddString("OK: " + player.Targets()); return;
+                        case "map": args.Context.AddString("OK: " + Shots.ShotCommands.Map(args, 2)); return;
+                        case "scene-export":
+                            args.Context.AddString("OK: " + FightOverlay.Instance.SceneExport(args.Length > 2 ? CommandText.Number(args[2], 0f, 200f, "Margin") : 30f));
+                            return;
+                        case "where":
+                            args.Context.AddString("OK: " + Where(player, CommandText.Arg(args, 2, "ct_replay where <user:id>")));
+                            return;
+                        case "digest":
+                            args.Context.AddString(SessionDigest(player, args.Length > 2 ? CommandText.Number(args[2], 1, 60, "Track rate") : 10f));
+                            return;
+                        case "tag":
+                            Highlight added = Highlights.Add(args.Length > 2 ? string.Join(" ", args.Args.Skip(2)) : "");
+                            args.Context.AddString("OK: " + Highlights.Line(added));
+                            return;
+                        case "tags":
+                            args.Context.AddString($"OK: highlights={player.Highlights.Count} file={(player.FilePath != null ? Highlights.JsonPath(player.FilePath) : "none")}");
+                            foreach (Highlight highlight in player.Highlights) args.Context.AddString(Highlights.Line(highlight));
+                            return;
+                        case "untag":
+                            int removeId = (int)CommandText.Number(CommandText.Arg(args, 2, "ct_replay untag <id>"), 1, int.MaxValue, "Highlight id");
+                            if (!Highlights.Remove(removeId)) throw new ArgumentException($"No highlight {removeId}; use ct_replay tags");
+                            args.Context.AddString($"OK: removed={removeId} highlights={player.Highlights.Count}");
+                            return;
                         case "events":
                             foreach (string line in EventLines(player.Events, args)) args.Context.AddString(line);
                             return;
@@ -122,9 +145,104 @@ namespace cameraTools.Replay
         }
 
         private static string Status(ReplayPlayer player) =>
-            $"time={player.PlaybackTime:F3} duration={player.Duration:F3} paused={player.IsPaused} speed={player.PlaybackSpeed:F2} session={player.Isolated} " +
+            $"time={player.PlaybackTime:F3} {Sun()} duration={player.Duration:F3} paused={player.IsPaused} speed={player.PlaybackSpeed:F2} session={player.Isolated} " +
             $"recordedCamera={player.FollowingRecordedCamera} target={player.CameraRig?.SelectedActor} camera=\"{player.CameraRig?.Status}\" " +
             $"music={player.Music?.Selected} volume={player.Music?.Volume:F2} panel={CameraToolsPanel.Visible} tab={CameraToolsPanel.Tab.ToString().ToLowerInvariant()} scene=\"{player.SceneSummary.Replace('\n', ' ')}\"";
+
+        /// <summary>The game's sun as the light is placed now: the direction toward it and its height above the horizon.</summary>
+        internal static string Sun()
+        {
+            if (EnvMan.instance == null || EnvMan.instance.m_dirLight == null) return "sun=unavailable";
+            EnvSetup? env = EnvMan.instance.GetCurrentEnvironment();
+            if (env == null) return "sun=unavailable";
+            Vector3 sun = ReplayDigest.SunDirection(env.m_sunAngle, EnvMan.instance.m_smoothDayFraction);
+            return $"sun={sun.x.ToString("F3", CultureInfo.InvariantCulture)},{sun.y.ToString("F3", CultureInfo.InvariantCulture)},{sun.z.ToString("F3", CultureInfo.InvariantCulture)} " +
+                $"sunElevation={(Mathf.Asin(Mathf.Clamp(sun.y, -1f, 1f)) * Mathf.Rad2Deg).ToString("F1", CultureInfo.InvariantCulture)} environment={env.m_name}";
+        }
+
+        /// <summary>An actor's position, facing and health at the current replay time, from the recorded track.</summary>
+        private static string Where(ReplayPlayer player, string actor)
+        {
+            ActorTrack track = player.Tracks.Get(actor);
+            float time = player.PlaybackTime;
+            if (!track.Sample(time, out Vector3 position, out Quaternion rotation))
+                return $"actor={actor} present=false time={time:F3} firstSeen={track.Start:F3} lastSeen={track.End:F3}";
+            float? health = null;
+            foreach (DamageEvent damage in player.File.Damage)
+                if (damage.User == track.User && damage.Id == track.Id && damage.Time <= time) health = damage.Health;
+            GameObject? shown = player.FindTarget(track.User, track.Id);
+            string live = shown != null ? $" shown={F(shown.transform.position.x)},{F(shown.transform.position.y)},{F(shown.transform.position.z)}" : " shown=none";
+            return $"actor={actor} present=true time={time:F3} position={F(position.x)},{F(position.y)},{F(position.z)} yaw={F(rotation.eulerAngles.y)} " +
+                $"health={(health.HasValue ? F(health.Value) : "unknown")} prefab={player.File.Info.PrefabName(track.Prefab)}{live}";
+        }
+
+        private static string F(float value) => value.ToString("F2", CultureInfo.InvariantCulture);
+
+        private static readonly Dictionary<string, Task> DigestExports = new();
+
+        /// <summary>Writes the digest of the playing replay, with sizes and sun angles from the session's loaded game data.</summary>
+        private static string SessionDigest(ReplayPlayer player, float rate)
+        {
+            string path = player.FilePath ?? throw new InvalidOperationException("This replay was not opened from a file");
+            string json = ReplayDigest.JsonPath(path);
+            if (DigestExports.TryGetValue(path, out Task running))
+            {
+                if (!running.IsCompleted) return $"PENDING: writing {json}";
+                DigestExports.Remove(path);
+                if (running.IsFaulted) throw new InvalidOperationException("Could not write the digest: " + running.Exception?.GetBaseException().Message);
+                return $"OK: digest json={json} bytes={new FileInfo(json).Length}";
+            }
+            DigestContext context = DigestContext.Capture(player.File, path);
+            context.Rate = rate;
+            ReplayFile replay = player.File;
+            DigestExports[path] = Task.Run(() => ReplayDigest.Write(json, replay, context));
+            return $"ACCEPTED: writing {json}; run 'ct_replay digest' again until it reports OK";
+        }
+
+        /// <summary>Writes the digest of a recording file in the background; from the main menu sizes and sun angles are unavailable.</summary>
+        private static void ExportDigest(Terminal terminal, string path, float rate)
+        {
+            string json = ReplayDigest.JsonPath(path);
+            if (DigestExports.TryGetValue(path, out Task export))
+            {
+                if (!export.IsCompleted) { terminal.AddString($"PENDING: writing {json}"); return; }
+                DigestExports.Remove(path);
+                if (export.IsFaulted) throw new InvalidOperationException("Could not write the digest: " + export.Exception?.GetBaseException().Message);
+                terminal.AddString($"OK: digest json={json} bytes={new FileInfo(json).Length}");
+                return;
+            }
+            ReplayFile header = ReplayFileIO.ReadInfo(path);
+            DigestContext context = DigestContext.Capture(header, path);
+            context.Rate = rate;
+            DigestExports[path] = Task.Run(() => ReplayDigest.Write(json, ReplayFileIO.Read(path), context));
+            terminal.AddString($"ACCEPTED: writing {json}; run 'replay digest {Path.GetFileNameWithoutExtension(path)}' again until it reports OK");
+        }
+
+        /// <summary>Test helper: copies a recording keeping every other frame, to compare sample rates on the same fight.</summary>
+        private static void Downsample(Terminal terminal, string path, string name)
+        {
+            if (name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) throw new ArgumentException($"'{name}' is not a valid file name");
+            string target = Path.Combine(ReplayFileIO.GetReplayDirectory(), name + ".valreplay");
+            if (DigestExports.TryGetValue(target, out Task running))
+            {
+                if (!running.IsCompleted) { terminal.AddString($"PENDING: writing {target}"); return; }
+                DigestExports.Remove(target);
+                if (running.IsFaulted) throw new InvalidOperationException("Could not write the copy: " + running.Exception?.GetBaseException().Message);
+                terminal.AddString($"OK: downsampled file={target}");
+                return;
+            }
+            DigestExports[target] = Task.Run(() =>
+            {
+                ReplayFile replay = ReplayFileIO.Read(path);
+                List<ReplayFrame> kept = new();
+                for (int index = 0; index < replay.Frames.Count; index += 2) kept.Add(replay.Frames[index]);
+                replay.Frames = kept;
+                replay.SampleRate /= 2f;
+                replay.Info.Name = name;
+                ReplayFileIO.Write(target, replay);
+            });
+            terminal.AddString($"ACCEPTED: writing {target}; repeat the command until it reports OK");
+        }
 
         private static void Select(ReplayCameraRig rig, string actor)
         {
@@ -149,10 +267,19 @@ namespace cameraTools.Replay
                 return;
             }
             if (ReplayRecorder.IsRecording) { args.Context.AddString("ERROR: unavailable: Already recording. " + recorder.StatusLine); return; }
-            // "record <name>" and "record start [name]" both start a take.
-            string? name = action == "start" ? (args.Length >= 3 ? args[2] : null) : action == "toggle" ? null : args[1];
+            // "record <name>" and "record start [name] [--rate 30|60]" both start a take.
+            List<string> words = args.Args.Skip(1).ToList();
+            int? rate = null;
+            int rateIndex = words.FindIndex(word => word == "--rate");
+            if (rateIndex >= 0)
+            {
+                if (rateIndex + 1 >= words.Count || (words[rateIndex + 1] != "30" && words[rateIndex + 1] != "60")) { args.Context.AddString("ERROR: invalid-argument: --rate takes 30 or 60"); return; }
+                rate = int.Parse(words[rateIndex + 1], CultureInfo.InvariantCulture);
+                words.RemoveRange(rateIndex, 2);
+            }
+            string? name = action == "start" ? (words.Count >= 2 ? words[1] : null) : action == "toggle" ? null : words.Count >= 1 ? words[0] : null;
             if (name != null && name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) { args.Context.AddString($"ERROR: invalid-argument: '{name}' is not a valid file name"); return; }
-            if (recorder.StartRecording(name)) args.Context.AddString("OK: " + recorder.StatusLine);
+            if (recorder.StartRecording(name, rate)) args.Context.AddString("OK: " + recorder.StatusLine);
             else args.Context.AddString("ERROR: unavailable: Recording needs a loaded world with no replay or save running. " + recorder.StatusLine);
         }
 
@@ -166,6 +293,12 @@ namespace cameraTools.Replay
                     case "list": ListReplays(args.Context); return;
                     case "folder": args.Context.AddString("OK: folder=" + ReplayFileIO.GetReplayDirectory()); return;
                     case "events": ExportEvents(args.Context, Find(CommandText.Arg(args, 2, "replay events <file>"))); return;
+                    case "digest":
+                        ExportDigest(args.Context, Find(CommandText.Arg(args, 2, "replay digest <file> [rate]")), args.Length > 3 ? CommandText.Number(args[3], 1, 60, "Track rate") : 10f);
+                        return;
+                    case "downsample":
+                        Downsample(args.Context, Find(CommandText.Arg(args, 2, "replay downsample <file> <new name>")), CommandText.Arg(args, 3, "replay downsample <file> <new name>"));
+                        return;
                     case "info":
                         foreach (string line in Info(Find(CommandText.Arg(args, 2, "replay info <file>")))) args.Context.AddString(line);
                         return;
@@ -296,7 +429,7 @@ namespace cameraTools.Replay
 
         private static List<string> GetReplayOptions()
         {
-            List<string> options = new() { "list", "info", "events", "folder", "browser", "exit" };
+            List<string> options = new() { "list", "info", "events", "digest", "downsample", "folder", "browser", "exit" };
             string directory = ReplayFileIO.GetReplayDirectory();
             if (Directory.Exists(directory)) options.AddRange(Directory.GetFiles(directory, "*.valreplay").Select(Path.GetFileNameWithoutExtension));
             return options;
