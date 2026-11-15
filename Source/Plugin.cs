@@ -42,8 +42,8 @@ namespace cameraTools
             ReplayMemoryBudgetMiB = Config.Bind("Replay", "MemoryBudgetMiB", 2048,
                 new ConfigDescription("Estimated recording sample memory budget in MiB. The take saves automatically at this budget or 10 minutes. Lower this on machines with limited free memory; effects increase memory use.",
                     new AcceptableValueRange<int>(128, 8192)));
-            ReplaySampleRate = Config.Bind("Recording", "SampleRate", 30,
-                new ConfigDescription("Samples per second for new takes. 60 keeps fast attacks smooth in deep slow motion and uses about twice the memory and file size.",
+            ReplaySampleRate = Config.Bind("Recording", "SampleRate", 60,
+                new ConfigDescription("Samples per second for new takes. 60 keeps fast attacks smooth in deep slow motion; 30 halves the character samples in memory and on disk.",
                     new AcceptableValueList<int>(30, 60)));
             HighlightKey = Config.Bind("Replay", "HighlightKey", new KeyboardShortcut(KeyCode.H),
                 "While watching a replay, tags the current moment and camera view as a highlight");

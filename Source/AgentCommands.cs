@@ -50,7 +50,7 @@ namespace cameraTools
             "ct_replay media - recorded effects, sounds and deaths. ct_replay exit - leave the replay (session: ACCEPTED, poll state until menu).",
             "ct_replay where <user:id> - the actor's recorded position, facing and health now. ct_replay digest [rate] - writes <file>.digest.json (ACCEPTED; repeat until OK).",
             "replay digest <file> [rate] - the same from the main menu (sizes and sun need a session). replay downsample <file> <new name> - test copy with every other frame.",
-            "record start [name] --rate 60 - record at 60 samples a second (setting Recording.SampleRate sets the default).",
+            "record start [name] --rate 30|60 - samples a second for this take; the setting Recording.SampleRate sets the default (60).",
             "ct_replay tag [label] | tags | untag <id> - highlights of the playing replay (H while watching), saved in <file>.highlights.json.",
             "ct_grid <on|off|status> [spacing] | ct_grid cell <name> | ct_grid probe <x> <z> - ground grid with 5 m cells named A1.. (letters west to east, numbers south to north); probe prints surface and terrain heights.",
             "ct_trails <on|off|status> [user:id ...] - actor paths with a tick every second, deaths and hits. ct_screenshot [file] --overlays keeps them in a screenshot.",

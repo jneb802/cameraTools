@@ -165,7 +165,7 @@ BepInEx/config/cameraTools/screenshots/
 
 A recording holds:
 
-- every character, projectile, ragdoll and dropped item within 150 m: position, every bone, equipment, effects, sounds and deaths, 30 times a second;
+- every character, projectile, ragdoll and dropped item within 150 m: position, every bone, equipment, effects, sounds and deaths, 60 times a second (30 when set);
 - the camera you recorded with;
 - the surroundings: every world object your game had loaded (building pieces, trees, rocks, location objects, terrain edits and their changes during the take), the base terrain of each loaded 64 m zone, and the weather, wind and time of day.
 
@@ -211,7 +211,7 @@ Older recordings stay readable. Files before version 9 have no health samples, s
 
 ### Sample rate
 
-Takes record 30 samples a second. `record start <name> --rate 60`, or the setting `Recording.SampleRate`, records 60 so fast attacks stay smooth in deep slow motion; it stores twice the character samples (a small meadow fight measured 8.0 MB per minute at 60 against 6.5 MB at 30; the surroundings are the same size at both rates). At 0.25x and slower, 60 samples keep fast weapon arcs that 30 samples cut short. The file stores its rate. `replay downsample <file> <new name>` writes a copy with every other sample, to compare the two rates on the same fight.
+Takes record 60 samples a second, so fast attacks stay smooth in deep slow motion. `record start <name> --rate 30`, or the setting `Recording.SampleRate`, records 30 to save memory and disk; 60 stores twice the character samples (a small meadow fight measured 8.0 MB per minute at 60 against 6.5 MB at 30; the surroundings are the same size at both rates). At 0.25x and slower, 60 samples keep fast weapon arcs that 30 samples cut short. The file stores its rate. `replay downsample <file> <new name>` writes a copy with every other sample, to compare the two rates on the same fight.
 
 ### Digest
 
