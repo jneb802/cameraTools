@@ -21,6 +21,11 @@ namespace cameraTools.Replay.Shots
         public float? maxForeground;
         /// <summary>The impact time in replay seconds: both fighters must be fully in frame and visible then.</summary>
         public float? moment;
+        /// <summary>
+        /// [from, to] replay seconds where the framing rules apply. Outside it the fighters may enter and leave the frame:
+        /// a locked-off shot holds its frame while the action plays through it. The whole shot when absent.
+        /// </summary>
+        public float[]? action;
         /// <summary>Score term weights by name (visibility, size, position, margin, angle, composition).</summary>
         public Dictionary<string, float>? weights;
     }
@@ -62,6 +67,11 @@ namespace cameraTools.Replay.Shots
         public readonly List<ActorFrame> Actors = new();
         public float Foreground;
         public bool HeadCovered;
+        /// <summary>Frame width from the left edge of the subject and partner boxes to the right edge, when both are at least half in frame.</summary>
+        public float? PairSpread;
+        /// <summary>The largest share of the frame one unmeasured actor covers nearer than the subject, and its name.</summary>
+        public float InFront;
+        public string InFrontName = "";
         public float Score;
         public readonly Dictionary<string, float> Terms = new();
         public ActorFrame? Subject => Actors.FirstOrDefault(a => a.Role == "subject");
@@ -87,6 +97,12 @@ namespace cameraTools.Replay.Shots
         internal static readonly string[] SizeOrder = { "close", "medium_close", "medium", "cowboy", "knee", "full", "wide", "extreme_wide" };
         /// <summary>A featured player smaller than a third of the frame height is a speck (the default size rule).</summary>
         internal const float SpeckLimit = 0.33f;
+        /// <summary>Subject and partner in-frame ratio needed across the action (calibrated from the user's labels: a body cut by the bottom edge).</summary>
+        internal const float InFrameNeeded = 0.95f;
+        /// <summary>The widest the pair may spread across the frame (calibrated: fighters at opposite edges with an empty middle).</summary>
+        internal const float MaxPairSpread = 0.7f;
+        /// <summary>The share of the frame one unmeasured actor nearer than the subject may cover (calibrated: a pack wolf crossing in front).</summary>
+        internal const float MaxInFront = 0.15f;
         // Joint heights as a fraction of body height: ankle, knee, waist, neck.
         private static readonly (string Name, float Height)[] Joints = { ("ankle", 0.04f), ("knee", 0.28f), ("waist", 0.53f), ("neck", 0.87f) };
         internal static readonly Dictionary<string, float> DefaultWeights = new()
@@ -104,6 +120,7 @@ namespace cameraTools.Replay.Shots
         internal readonly Vector2? Place;
         internal readonly float MinVisible, MaxForeground;
         internal readonly float? Moment;
+        internal readonly (float From, float To)? Action;
         internal readonly Dictionary<string, float> Weights;
         /// <summary>Measured actors in order: subject, partner, then the other keepInFrame actors.</summary>
         internal readonly List<(ActorTrack Track, string Role)> Measured = new();
@@ -174,6 +191,7 @@ namespace cameraTools.Replay.Shots
             MinVisible = spec.minVisible ?? 0.6f;
             MaxForeground = spec.maxForeground ?? 0.15f;
             Moment = spec.moment;
+            if (spec.action is { Length: 2 }) Action = (spec.action[0], spec.action[1]);
             Weights = new Dictionary<string, float>(DefaultWeights);
             if (spec.weights != null) foreach (KeyValuePair<string, float> weight in spec.weights) Weights[weight.Key] = weight.Value;
             if (SubjectTrack != null) Measured.Add((SubjectTrack, "subject"));
@@ -375,6 +393,8 @@ namespace cameraTools.Replay.Shots
                 actor.Visible = rays ? VisibleFraction(camera, track, feet, height, radius, present) : 1f;
                 frame.Actors.Add(actor);
             }
+            if (frame.Subject is ActorFrame first && frame.Partner is ActorFrame second && first.InFrame >= 0.5f && second.InFrame >= 0.5f)
+                frame.PairSpread = Mathf.Max(first.Box.xMax, second.Box.xMax) - Mathf.Min(first.Box.xMin, second.Box.xMin);
             if (rays) Foreground(frame, rotation, fov, present);
             Score(frame);
             return frame;
@@ -472,6 +492,20 @@ namespace cameraTools.Replay.Shots
                     if (Near((gx + 0.5f) / GridX, (gy + 0.5f) / GridY)) hits++;
                 }
             frame.Foreground = total > 0 ? hits / (float)total : 0f;
+            // Actors that are not measured (another wolf of the pack, a bystander) crossing between the camera and the
+            // subject, at any distance nearer than the subject.
+            if (frame.Subject is ActorFrame subject)
+                foreach ((ActorTrack track, Vector3 feet, float height, float radius) in present)
+                {
+                    if (Measured.Any(m => m.Track == track)) continue;
+                    int covered = 0;
+                    for (int gx = 0; gx < GridX; gx++)
+                        for (int gy = 0; gy < GridY; gy++)
+                            if (RayCapsule(frame.Camera, Ray(rotation, fov, Aspect, (gx + 0.5f) / GridX, (gy + 0.5f) / GridY), feet, height, radius, out float hit) && hit < subject.Distance)
+                                covered++;
+                    float share = total > 0 ? covered / (float)total : 0f;
+                    if (share > frame.InFront) { frame.InFront = share; frame.InFrontName = Name(track); }
+                }
             foreach (ActorFrame actor in frame.Actors)
             {
                 if (actor.Role == "keep" || actor.HeadBox.width <= 0f) continue;
@@ -540,7 +574,9 @@ namespace cameraTools.Replay.Shots
             float head = subject.Box.yMax <= 1f ? 1f : 0.6f;
             float lead = subject.Lead is float l ? Mathf.Clamp01(l / 0.6f) : 1f;
             float margin = inFrame * head * (0.7f + 0.3f * lead) * (EdgeCut(subject) != null ? 0.85f : 1f) * (frame.HeadCovered ? 0.6f : 1f)
-                * Mathf.Clamp01(1f - Mathf.Max(0f, frame.Foreground - MaxForeground) * 2f);
+                * Mathf.Clamp01(1f - Mathf.Max(0f, frame.Foreground - MaxForeground) * 2f)
+                * Mathf.Clamp01(1f - Mathf.Max(0f, (frame.PairSpread ?? 0f) - MaxPairSpread) * 2f)
+                * Mathf.Clamp01(1f - Mathf.Max(0f, frame.InFront - MaxInFront) * 2f);
             // View angle: level to moderately high cameras, and beside the player when the partner is much bigger.
             Vector3 forward = frame.Rotation * Vector3.forward;
             float pitch = Mathf.Asin(Mathf.Clamp(-forward.y, -1f, 1f)) * Mathf.Rad2Deg;
@@ -619,7 +655,23 @@ namespace cameraTools.Replay.Shots
         /// Whether the partner must be in frame at a time: always without a moment; with one, from 0.5 s before it, so
         /// an attacker may run into the frame before the strike.
         /// </summary>
-        internal bool PartnerCounts(ActorFrame actor, float time) => actor.Role != "partner" || Moment is not float moment || time >= moment - 0.5f;
+        internal bool PartnerCounts(ActorFrame actor, float time) =>
+            InAction(time) && (actor.Role != "partner" || Moment is not float moment || time >= moment - 0.5f);
+
+        /// <summary>
+        /// Night separation: the subject's brightness against what is directly behind it, averaged over 0.3 s, stays within
+        /// this many stops for two samples in a row or more (from framing.md, Night Separation). On mountainFight1 the player
+        /// fades into green fog over the last 0.2 s of the b05 shots; a longer minimum missed it.
+        /// </summary>
+        internal const float LowSeparationStops = 0.32f, LowSeparationSeconds = 0.1f;
+        /// <summary>
+        /// The share of the frame that things other than the subject and the terrain may cover from the camera to
+        /// <see cref="ClutterDepth"/> metres past the subject (clutter beside the subject, at any distance from the camera).
+        /// </summary>
+        internal const float MaxClutter = 0.35f, ClutterDepth = 2f;
+
+        /// <summary>Whether a time is inside the framing block's action range (always, without one).</summary>
+        internal bool InAction(float time) => Action is not (float from, float to) || (time >= from - 0.001f && time <= to + 0.001f);
 
         // ---------------------------------------------------------------- serialise
 
@@ -658,6 +710,9 @@ namespace cameraTools.Replay.Shots
                 json["fov"] = Math.Round(frame.Fov, 2);
                 json["foreground"] = R(frame.Foreground);
                 json["headCovered"] = frame.HeadCovered;
+                json["pairSpread"] = frame.PairSpread.HasValue ? R(frame.PairSpread.Value) : null;
+                json["inFront"] = R(frame.InFront);
+                if (frame.InFront > 0f) json["inFrontActor"] = frame.InFrontName;
                 json["terms"] = frame.Terms.ToDictionary(t => t.Key, t => (object)R(t.Value));
             }
             return json;
