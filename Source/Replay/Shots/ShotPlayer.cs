@@ -35,6 +35,9 @@ namespace cameraTools.Replay.Shots
         private Vector3 _smoothLook;
         private bool _hasSmoothLook;
         private float _lastFov = ShotEvaluator.DefaultFov;
+        private Vector3 _lastLook;
+        private float _lastRoll;
+        private Quaternion _lastRotation = Quaternion.identity;
         private string _job = "";
         private string _jobResult = "";
         private bool _cancel;
@@ -75,7 +78,7 @@ namespace cameraTools.Replay.Shots
         }
 
         /// <summary>Body heights of every recorded character: saved with version 10 files, otherwise read from loaded prefabs.</summary>
-        private static Dictionary<(long, uint), float> Heights(ReplayPlayer player)
+        internal static Dictionary<(long, uint), float> Heights(ReplayPlayer player)
         {
             Dictionary<(long, uint), float> heights = new();
             Dictionary<int, (float Height, float Radius)> sizes = CombatData.Sizes(player.File.Info);
@@ -241,6 +244,9 @@ namespace cameraTools.Replay.Shots
             if (GameCamera.m_instance != null) GameCamera.m_instance.transform.rotation = rotation;
             SetFov(pose.Fov);
             _lastFov = pose.Fov;
+            _lastLook = look;
+            _lastRoll = pose.Roll;
+            _lastRotation = rotation;
             Focus(pose.Position, look);
         }
 
@@ -292,172 +298,196 @@ namespace cameraTools.Replay.Shots
 
         // ---------------------------------------------------------------- check
 
-        private static readonly int SolidMask = LayerMask.GetMask("piece", "static_solid", "Default", "Default_small", "vehicle", "terrain");
-        private static readonly int TerrainMask = LayerMask.GetMask("terrain");
-
         /// <summary>
-        /// Steps the shot every 0.05 s of replay time without rendering and reports time ranges where the camera is under
-        /// the ground or inside an object, the view to the look target is blocked, a keepInFrame actor leaves the frame,
-        /// or the camera is within 0.5 m of a body.
+        /// Steps the shot every 0.05 s of replay time as a render would show it (look smoothing and shake included) and
+        /// reports the old checks and the framing measurements; see <see cref="ShotCheck"/>. Writes the report with the
+        /// per-step series to &lt;shot&gt;.check.json.
         /// </summary>
         internal string Check(string path, float aspect)
         {
-            CanopyCache.Clear();
             ShotEvaluator evaluator = Evaluator(path);
-            ReplayPlayer player = ReplayPlayer.Instance;
-            Dictionary<string, (float From, float To, string Detail)> open = new();
-            List<Dictionary<string, object>> issues = new();
-            void Close(string key)
-            {
-                if (!open.TryGetValue(key, out (float From, float To, string Detail) range)) return;
-                open.Remove(key);
-                string[] parts = key.Split('|');
-                issues.Add(new Dictionary<string, object> { ["type"] = parts[0], ["subject"] = parts.Length > 1 ? parts[1] : "", ["from"] = Math.Round(range.From, 2), ["to"] = Math.Round(range.To, 2), ["detail"] = range.Detail });
-            }
-            List<ActorTrack> actors = player.Tracks.All.Where(t => t.Kind == 0 && !t.IsProjectile).ToList();
-            Dictionary<(long, uint), float> radii = new();
-            Dictionary<int, (float Height, float Radius)> sizes = CombatData.Sizes(player.File.Info);
-            foreach (ActorTrack track in actors)
-                radii[(track.User, track.Id)] = player.File.Actors.TryGetValue((track.User, track.Id), out ActorInfo info) && info.Radius > 0f ? info.Radius
-                    : sizes.TryGetValue(track.Prefab, out (float Height, float Radius) size) ? size.Radius : 0.5f;
-            HashSet<(long, uint)> deaths = new(player.File.Deaths.Select(death => (death.User, death.Id)));
-            int steps = 0;
-            for (float time = evaluator.Shot.start; time <= evaluator.Shot.end + 0.0001f; time += 0.05f)
-            {
-                steps++;
-                ShotPose pose = evaluator.Evaluate(time);
-                HashSet<string> now = new();
-                void Mark(string key, string detail)
-                {
-                    now.Add(key);
-                    if (open.TryGetValue(key, out (float From, float To, string Detail) range)) open[key] = (range.From, time, range.Detail);
-                    else open[key] = (time, time, detail);
-                }
-                if (Physics.Raycast(pose.Position + Vector3.up * 1000f, Vector3.down, out RaycastHit ground, 2000f, TerrainMask, QueryTriggerInteraction.Ignore) && pose.Position.y < ground.point.y + 0.1f)
-                    Mark("below_ground", $"camera {ShotEvaluator.F(pose.Position.y - ground.point.y)} m from the terrain surface");
-                Collider[] inside = Physics.OverlapSphere(pose.Position, 0.15f, SolidMask & ~TerrainMask, QueryTriggerInteraction.Ignore);
-                if (inside.Length > 0) Mark("inside_object|" + Blocker(inside[0]), "camera inside a solid object");
-                Vector3 toLook = pose.LookAt - pose.Position;
-                float distance = toLook.magnitude;
-                if (distance > 0.6f && Physics.Raycast(pose.Position, toLook / distance, out RaycastHit blocker, distance - 0.5f, SolidMask, QueryTriggerInteraction.Ignore))
-                    Mark("view_blocked|" + Blocker(blocker.collider), $"blocked {ShotEvaluator.F(blocker.distance)} m from the camera, look target {ShotEvaluator.F(distance)} m away");
-                string? foliage = Foliage(pose.Position, pose.LookAt, out bool insideFoliage);
-                if (foliage != null) Mark((insideFoliage ? "inside_foliage|" : "view_foliage|") + foliage, insideFoliage ? "camera inside a tree's branches" : "view passes through a tree's branches");
-                Matrix4x4 projection = Matrix4x4.Perspective(pose.Fov, aspect, 0.1f, 5000f);
-                Matrix4x4 view = Matrix4x4.TRS(pose.Position, ShotEvaluator.Rotation(pose.Position, pose.LookAt, pose.Roll, Vector3.zero), Vector3.one).inverse;
-                Matrix4x4 clip = projection * Matrix4x4.Scale(new Vector3(1, 1, -1)) * view;
-                foreach (string actor in evaluator.Shot.keepInFrame)
-                {
-                    ActorTrack track = player.Tracks.Get(actor);
-                    if (!track.Sample(time, out Vector3 feet, out _))
-                    {
-                        // An actor that died is removed (its ragdoll takes over); leaving the frame then is expected.
-                        if (!(time > track.End && deaths.Contains((track.User, track.Id)))) Mark("keep_absent|" + actor, "actor not present at this time");
-                        continue;
-                    }
-                    float height = evaluator.Height(track);
-                    Vector2? center = Viewport(clip, feet + Vector3.up * height * 0.5f);
-                    bool anyVisible = new[] { feet, feet + Vector3.up * height * 0.5f, feet + Vector3.up * height }.Any(p => Viewport(clip, p) is Vector2 v && v.x >= 0 && v.x <= 1 && v.y >= 0 && v.y <= 1);
-                    if (!anyVisible) Mark("keep_off_screen|" + actor, "actor fully outside the frame");
-                    else if (center is not Vector2 c || c.x < 0.1f || c.x > 0.9f || c.y < 0.1f || c.y > 0.9f) Mark("keep_near_edge|" + actor, "actor centre outside the middle 80% of the frame");
-                }
-                foreach (ActorTrack track in actors)
-                {
-                    if (!track.Sample(time, out Vector3 feet, out _)) continue;
-                    float height = evaluator.Height(track);
-                    Vector3 closest = new(feet.x, Mathf.Clamp(pose.Position.y, feet.y, feet.y + height), feet.z);
-                    float gap = Vector3.Distance(pose.Position, closest) - radii[(track.User, track.Id)];
-                    if (gap < 0.5f) Mark("too_close|" + track.Key, $"camera {ShotEvaluator.F(gap)} m from {player.File.Info.PrefabName(track.Prefab)}");
-                }
-                foreach (string key in open.Keys.ToList()) if (!now.Contains(key)) Close(key);
-            }
-            foreach (string key in open.Keys.ToList()) Close(key);
+            Stopwatch clock = Stopwatch.StartNew();
+            ShotAnalysis analysis = ShotCheck.Analyse(evaluator, aspect, new CheckSettings(), ShotCheck.Canopies(evaluator));
             string report = Path.ChangeExtension(path, ".check.json");
-            File.WriteAllText(report, JsonConvert.SerializeObject(new Dictionary<string, object>
-            {
-                ["shot"] = evaluator.Shot.name, ["file"] = path, ["steps"] = steps, ["stepSeconds"] = 0.05, ["aspect"] = Math.Round(aspect, 4),
-                ["outputSeconds"] = Math.Round(evaluator.OutputDuration(), 3), ["issues"] = issues
-            }, Formatting.Indented));
-            _jobResult = issues.Count == 0 ? $"check {evaluator.Shot.name}: no issues" : $"check {evaluator.Shot.name}: {issues.Count} issues";
-            string lines = string.Join("\n", issues.Select(i => $"issue type={i["type"]} subject={i["subject"]} from={i["from"]} to={i["to"]} detail=\"{i["detail"]}\""));
-            return (issues.Count == 0 ? "OK: issues=0" : $"OK: issues={issues.Count}") + $" report={report}" + (lines.Length > 0 ? "\n" + lines : "");
+            WriteCheck(report, path, evaluator, aspect, analysis, null);
+            _jobResult = $"check {evaluator.Shot.name}: {analysis.Issues.Count} issues score={analysis.Score:F2}";
+            return $"OK: issues={analysis.Issues.Count} score={analysis.Score:F2} seconds={clock.Elapsed.TotalSeconds:F2} report={report}" + IssueLines(analysis.Issues);
         }
 
-        private static readonly string[] TreeNames = { "tree", "beech", "birch", "oak", "yggashoot", "pine", "fir", "shrub", "bush" };
-        private static readonly Dictionary<GameObject, Bounds> CanopyCache = new();
+        private static string IssueLines(IEnumerable<Dictionary<string, object?>> issues)
+        {
+            string lines = string.Join("\n", issues.Select(i => $"issue type={i["type"]} subject={i["subject"]} from={i["from"]} to={i["to"]}" +
+                (i.TryGetValue("value", out object? value) ? $" value={value}" : "") + (i.TryGetValue("method", out object? method) ? $" method={method}" : "") + $" detail=\"{i["detail"]}\""));
+            return lines.Length > 0 ? "\n" + lines : "";
+        }
+
+        private static void WriteCheck(string report, string path, ShotEvaluator evaluator, float aspect, ShotAnalysis analysis, Dictionary<string, object?>? pixels)
+        {
+            Dictionary<string, object?> json = new()
+            {
+                ["shot"] = evaluator.Shot.name, ["file"] = path, ["steps"] = analysis.StepCount, ["stepSeconds"] = 0.05, ["aspect"] = Math.Round(aspect, 4),
+                ["outputSeconds"] = Math.Round(evaluator.OutputDuration(), 3), ["score"] = Math.Round(analysis.Score, 3), ["issues"] = analysis.Issues,
+                ["bodies"] = new Framing(evaluator, aspect).Bodies(),
+                ["series"] = analysis.Steps.Select(step => Framing.Json(step, true)).ToList()
+            };
+            if (pixels != null) json["pixels"] = pixels;
+            File.WriteAllText(report, JsonConvert.SerializeObject(json, Formatting.Indented));
+        }
 
         /// <summary>
-        /// Tree branches have no colliders, so the ray checks cannot see them. A tree's drawn size shrunk to its middle,
-        /// above its trunk, stands in for the branches: the camera inside it, or the view through it, is reported.
+        /// The check with the exact pixel pass: at each sampled time the replay seeks, waits for the actors, and a small
+        /// object buffer counts each measured actor's visible pixels. Reports the same issue types with method "pixels".
         /// </summary>
-        private static string? Foliage(Vector3 camera, Vector3 look, out bool inside)
+        internal string CheckPixels(string path, float aspect, float rate, bool debug)
         {
-            inside = false;
-            Vector3 direction = look - camera;
-            float distance = direction.magnitude;
-            if (distance < 0.5f) return null;
-            RaycastHit[] hits = Physics.SphereCastAll(camera, 5f, direction / distance, distance, LayerMask.GetMask("static_solid", "Default", "Default_small", "piece"), QueryTriggerInteraction.Ignore);
-            Collider[] around = Physics.OverlapSphere(camera, 5f, LayerMask.GetMask("static_solid", "Default", "Default_small", "piece"), QueryTriggerInteraction.Ignore);
-            foreach (Collider collider in hits.Select(hit => hit.collider).Concat(around))
-            {
-                if (collider == null) continue;
-                GameObject root = collider.GetComponentInParent<ZNetView>()?.gameObject ?? collider.transform.root.gameObject;
-                string name = Utils.GetPrefabName(root);
-                string lower = name.ToLowerInvariant();
-                if (!TreeNames.Any(lower.Contains)) continue;
-                if (!CanopyCache.TryGetValue(root, out Bounds canopy))
-                {
-                    Renderer[] renderers = root.GetComponentsInChildren<Renderer>().Where(r => r.enabled && r is not ParticleSystemRenderer).ToArray();
-                    if (renderers.Length == 0) continue;
-                    canopy = renderers[0].bounds;
-                    foreach (Renderer renderer in renderers) canopy.Encapsulate(renderer.bounds);
-                    // The middle of the drawn shape, starting a fifth of the way up: branches, not the trunk base or the tips.
-                    float bottom = canopy.min.y + canopy.size.y * 0.2f;
-                    canopy = new Bounds(new Vector3(canopy.center.x, (bottom + canopy.max.y) / 2f, canopy.center.z),
-                        new Vector3(canopy.size.x * 0.55f, canopy.max.y - bottom, canopy.size.z * 0.55f));
-                    CanopyCache[root] = canopy;
-                }
-                if (canopy.Contains(camera)) { inside = true; return name; }
-                if (canopy.IntersectRay(new Ray(camera, direction / distance), out float along) && along < distance - 0.5f && !canopy.Contains(look)) return name;
-            }
-            return null;
+            ShotEvaluator evaluator = Evaluator(path);
+            if (_mode == Mode.Render || _rendering) throw new InvalidOperationException("A render is running; use ct_shot render cancel");
+            _shotPath = path;
+            StartCoroutine(PixelRoutine(evaluator, path, aspect, rate, debug));
+            return $"ACCEPTED: pixel check of {evaluator.Shot.name} at {rate:F0} samples a second; poll ct_shot status until mode=idle";
         }
 
-        private static string Blocker(Collider collider) =>
-            collider.gameObject.layer == LayerMask.NameToLayer("terrain") ? "terrain" : Utils.GetPrefabName((collider.GetComponentInParent<ZNetView>()?.gameObject ?? collider.transform.root.gameObject));
-
-        private static Vector2? Viewport(Matrix4x4 clip, Vector3 point)
+        private IEnumerator PixelRoutine(ShotEvaluator evaluator, string path, float aspect, float rate, bool debug)
         {
-            Vector4 p = clip * new Vector4(point.x, point.y, point.z, 1f);
-            if (p.w <= 0.0001f) return null;
-            return new Vector2((p.x / p.w + 1f) * 0.5f, (p.y / p.w + 1f) * 0.5f);
+            Stopwatch clock = Stopwatch.StartNew();
+            ShotAnalysis analysis = ShotCheck.Analyse(evaluator, aspect, new CheckSettings(), ShotCheck.Canopies(evaluator));
+            List<List<PixelSample>> all = new();
+            yield return PixelSamples(new List<ShotEvaluator> { evaluator }, aspect, rate, debug ? Path.Combine(Path.GetDirectoryName(path)!, "pixels", evaluator.Shot.name) : null, all);
+            List<PixelSample> samples = all[0];
+            Framing framing = new(evaluator, aspect);
+            IssueRanges ranges = new("pixels");
+            List<Dictionary<string, object?>> series = new(), differences = new();
+            foreach (PixelSample sample in samples)
+            {
+                FrameMeasure? rays = analysis.Steps.OrderBy(step => Mathf.Abs(step.Time - sample.Time)).FirstOrDefault();
+                foreach (PixelActor actor in sample.Actors)
+                {
+                    if (!actor.Present) continue;
+                    ActorTrack track = ReplayPlayer.Instance.Tracks.Get(actor.Id);
+                    string role = framing.Measured.First(m => m.Track == track).Role;
+                    string name = framing.Name(track);
+                    bool counts = role != "partner" || framing.Moment is not float moment || sample.Time >= moment - 0.5f;
+                    if (actor.VisibleFraction < framing.MinVisible && counts) ranges.Mark("subject_hidden", actor.Id, sample.Time, $"{name} ({role}) {actor.VisibleFraction:P0} of its pixels visible", actor.VisibleFraction);
+                    if (role == "partner" && actor.InFrame < 0.8f && counts) ranges.Mark("pair_split", actor.Id, sample.Time, $"{name} {actor.InFrame:P0} of its pixels in frame", actor.InFrame);
+                    float? ray = rays?.Actors.FirstOrDefault(a => a.Id == actor.Id)?.Visible;
+                    if (ray.HasValue && Mathf.Abs(ray.Value - actor.VisibleFraction) > 0.2f)
+                        differences.Add(new Dictionary<string, object?> { ["t"] = Math.Round(sample.Time, 2), ["actor"] = actor.Id, ["rays"] = Framing.R(ray.Value), ["pixels"] = Framing.R(actor.VisibleFraction) });
+                }
+                if (sample.Foreground > framing.MaxForeground || sample.Actors.Any(a => a.HeadCovered))
+                    ranges.Mark("foreground_cover", "", sample.Time, sample.Actors.Any(a => a.HeadCovered) ? $"foreground pixels in a head box ({sample.Foreground:P0} of the frame)" : $"foreground covers {sample.Foreground:P0} of the frame", sample.Foreground, false);
+                ranges.Step();
+                series.Add(new Dictionary<string, object?>
+                {
+                    ["t"] = Math.Round(sample.Time, 3), ["foreground"] = Framing.R(sample.Foreground),
+                    ["actors"] = sample.Actors.ToDictionary(a => a.Id, a => (object?)new Dictionary<string, object?>
+                    {
+                        ["present"] = a.Present, ["visiblePixels"] = a.Visible, ["alonePixels"] = a.Alone, ["visible"] = Framing.R(a.VisibleFraction), ["inFrame"] = Framing.R(a.InFrame), ["headCovered"] = a.HeadCovered
+                    })
+                });
+            }
+            ranges.Finish();
+            analysis.Issues.AddRange(ranges.Issues);
+            Dictionary<string, object?> pixels = new()
+            {
+                ["rate"] = rate, ["buffer"] = "256x144", ["seconds"] = Math.Round(clock.Elapsed.TotalSeconds, 2), ["samples"] = samples.Count,
+                ["issues"] = ranges.Issues, ["raysDiffer"] = differences, ["series"] = series
+            };
+            string report = Path.ChangeExtension(path, ".check.json");
+            WriteCheck(report, path, evaluator, aspect, analysis, pixels);
+            _jobResult = $"pixel check {evaluator.Shot.name}: {ranges.Issues.Count} pixel issues, {analysis.Issues.Count - ranges.Issues.Count} ray issues, score={analysis.Score:F2}, " +
+                $"{differences.Count} samples where rays and pixels differ by more than 0.2, {clock.Elapsed.TotalSeconds:F1}s report={report}";
+        }
+
+        /// <summary>
+        /// Seeks to each sampled time, waits for the actors and counts pixels through the camera a render would use.
+        /// Several shots over the same replay time (the solver's candidates) share each seek: every shot's camera is
+        /// measured at every sampled time inside it. The times are those of the first shot, widened to cover them all.
+        /// </summary>
+        internal IEnumerator PixelSamples(List<ShotEvaluator> evaluators, float aspect, float rate, string? debugFolder, List<List<PixelSample>> samples)
+        {
+            List<Framing> framings = evaluators.Select(e => new Framing(e, aspect)).ToList();
+            List<List<CameraFrame>> frames = evaluators.Select(e => ShotCheck.Simulate(e, 60)).ToList();
+            foreach (ShotEvaluator _ in evaluators) samples.Add(new List<PixelSample>());
+            float start = evaluators.Min(e => e.Shot.start), end = evaluators.Max(e => e.Shot.end);
+            List<float> times = new();
+            for (float time = start; time <= end + 0.0001f; time += 1f / rate) times.Add(Mathf.Min(time, end));
+            using PixelPass pass = new(Mathf.RoundToInt(144 * aspect), 144);
+            using (new CleanFrame(false))
+            {
+                Begin(evaluators[0], Mode.Hold, times[0]);
+                _cancel = false;
+                for (int index = 0; index < times.Count && !_cancel; index++)
+                {
+                    float time = times[index];
+                    _job = $"pixels {evaluators[0].Shot.name}{(evaluators.Count > 1 ? $" and {evaluators.Count - 1} more" : "")} {index + 1}/{times.Count}";
+                    ReplayPlayer.Instance.Seek(time);
+                    _target = time;
+                    _hasSmoothLook = false;
+                    yield return WaitForActors(time);
+                    yield return null;
+                    for (int shot = 0; shot < evaluators.Count; shot++)
+                    {
+                        ShotFile file = evaluators[shot].Shot;
+                        if (time < file.start - 0.0001f || time > file.end + 0.0001f) continue;
+                        CameraFrame camera = ShotCheck.At(frames[shot], time);
+                        FrameMeasure measure = framings[shot].Measure(camera.Time, camera.Position, camera.Rotation, camera.Fov, rays: false);
+                        List<(string, GameObject?, Rect)> actors = new();
+                        foreach ((ActorTrack track, string _) in framings[shot].Measured)
+                        {
+                            if (!track.Sample(time, out _, out _)) continue;
+                            Rect head = measure.Actors.FirstOrDefault(a => a.Id == track.Key)?.HeadBox ?? Rect.zero;
+                            actors.Add((track.Key, ReplayPlayer.Instance.FindTarget(track.User, track.Id), head));
+                        }
+                        string? debug = debugFolder != null ? Path.Combine(debugFolder, $"{file.name}-{time.ToString("F2", CultureInfo.InvariantCulture)}.png") : null;
+                        samples[shot].Add(pass.Measure(time, camera.Position, camera.Rotation, camera.Fov, actors, Framing.ForegroundLimit(measure), debug));
+                    }
+                }
+            }
+            Stop();
+            _job = "";
         }
 
         // ---------------------------------------------------------------- preview
 
-        internal string Preview(string path, List<float> times, int count, bool overlays)
+        internal sealed class PreviewOptions
+        {
+            public int Count = 4;
+            public bool Overlays;
+            /// <summary>Strip mode: N evenly spaced stills plus each event, at a fixed size, each also with the framing overlay.</summary>
+            public int Strip;
+            public int Width = 640, Height = 360;
+        }
+
+        internal string Preview(string path, List<float> times, PreviewOptions options)
         {
             ShotEvaluator evaluator = Evaluator(path);
             if (times.Count == 0)
             {
-                int n = Mathf.Max(1, count);
+                int n = Mathf.Max(1, options.Strip > 0 ? options.Strip : options.Count);
                 for (int index = 0; index < n; index++) times.Add(evaluator.Shot.start + (evaluator.Shot.end - evaluator.Shot.start) * (n == 1 ? 0.5f : index / (float)(n - 1)));
                 foreach (ReplayEvent tag in ReplayPlayer.Instance.Events.Events)
                     if (tag.Time > evaluator.Shot.start && tag.Time < evaluator.Shot.end && (tag.Type == ReplayEventType.Death || tag.Type == ReplayEventType.Hit)) times.Add(tag.Time);
+                if (evaluator.Shot.framing?.moment is float moment) times.Add(moment);
             }
             foreach (float time in times)
                 if (time < evaluator.Shot.start - 0.001f || time > evaluator.Shot.end + 0.001f) throw new ArgumentException($"Preview time {time} is outside the shot ({evaluator.Shot.start}-{evaluator.Shot.end})");
             _shotPath = path;
-            StartCoroutine(PreviewRoutine(evaluator, times.Distinct().OrderBy(t => t).ToList(), overlays));
-            return $"ACCEPTED: saving {times.Count} stills; poll ct_shot status until mode=idle";
+            List<float> ordered = times.Select(t => (float)Math.Round(t, 2)).Distinct().OrderBy(t => t).ToList();
+            StartCoroutine(PreviewRoutine(evaluator, ordered, options));
+            return $"ACCEPTED: saving {ordered.Count} stills{(options.Strip > 0 ? $" at {options.Width}x{options.Height} with framing overlays" : "")}; poll ct_shot status until mode=idle";
         }
 
-        private IEnumerator PreviewRoutine(ShotEvaluator evaluator, List<float> times, bool overlays)
+        private IEnumerator PreviewRoutine(ShotEvaluator evaluator, List<float> times, PreviewOptions options)
         {
             string directory = Path.Combine(Path.GetDirectoryName(_shotPath)!, "previews");
             System.IO.Directory.CreateDirectory(directory);
             List<string> written = new();
-            using (new CleanFrame(overlays))
+            List<Dictionary<string, object?>> strip = new();
+            bool fixedSize = options.Strip > 0;
+            float aspect = fixedSize ? options.Width / (float)options.Height : Screen.width / (float)Mathf.Max(1, Screen.height);
+            Framing? framing = fixedSize ? new Framing(evaluator, aspect) : null;
+            PixelPass? pixels = fixedSize ? new PixelPass(Mathf.RoundToInt(144 * aspect), 144) : null;
+            using (new CleanFrame(options.Overlays))
             {
                 Begin(evaluator, Mode.Hold, times[0]);
                 _cancel = false;
@@ -472,17 +502,55 @@ namespace cameraTools.Replay.Shots
                     yield return WaitForActors(time);
                     for (int frame = 0; frame < 6; frame++) yield return null;
                     yield return new WaitForEndOfFrame();
-                    Texture2D image = ScreenCapture.CaptureScreenshotAsTexture();
-                    string file = Path.Combine(directory, $"{evaluator.Shot.name}-{time.ToString("F2", CultureInfo.InvariantCulture)}.png");
-                    File.WriteAllBytes(file, image.EncodeToPNG());
-                    Destroy(image);
-                    written.Add(file);
+                    string stem = Path.Combine(directory, $"{evaluator.Shot.name}-{time.ToString("F2", CultureInfo.InvariantCulture)}");
+                    if (!fixedSize)
+                    {
+                        Texture2D image = ScreenCapture.CaptureScreenshotAsTexture();
+                        File.WriteAllBytes(stem + ".png", image.EncodeToPNG());
+                        Destroy(image);
+                        written.Add(stem + ".png");
+                        continue;
+                    }
+                    Texture2D clean = FramingStill.Capture(options.Width, options.Height, out RenderTexture target);
+                    try
+                    {
+                        Transform camera = GameCamera.m_instance.transform;
+                        FrameMeasure measure = framing!.Measure(time, camera.position, camera.rotation, CurrentFov());
+                        Dictionary<string, float> brightness = FramingStill.Brightness(clean, measure, pixels!, ReplayPlayer.Instance);
+                        FramingStill.Write(stem + ".png", clean);
+                        string header = $"{evaluator.Shot.name}  t={time:F2}  score {measure.Score:F2}  fg {measure.Foreground:F2}{(measure.HeadCovered ? " HEAD COVERED" : "")}";
+                        Texture2D overlay = FramingStill.Overlay(target, measure, header, brightness);
+                        FramingStill.Write(stem + "-overlay.png", overlay);
+                        Destroy(overlay);
+                        written.Add(stem + ".png");
+                        Dictionary<string, object?> entry = Framing.Json(measure, true);
+                        entry["clean"] = Path.GetFileName(stem + ".png");
+                        entry["overlay"] = Path.GetFileName(stem + "-overlay.png");
+                        entry["camera"] = ReplayEvents.Round(camera.position);
+                        entry["rotation"] = Quat(camera.rotation);
+                        entry["fov"] = Math.Round(CurrentFov(), 2);
+                        entry["brightnessStops"] = brightness.ToDictionary(b => b.Key, b => (object)Math.Round(b.Value, 2));
+                        strip.Add(entry);
+                    }
+                    finally
+                    {
+                        Destroy(clean);
+                        RenderTexture.ReleaseTemporary(target);
+                    }
                 }
             }
+            pixels?.Dispose();
+            if (fixedSize)
+                File.WriteAllText(Path.Combine(directory, evaluator.Shot.name + ".strip.json"), JsonConvert.SerializeObject(new Dictionary<string, object?>
+                {
+                    ["shot"] = evaluator.Shot.name, ["width"] = options.Width, ["height"] = options.Height, ["stills"] = strip
+                }, Formatting.Indented));
             Stop();
             _job = "";
             _jobResult = $"preview {evaluator.Shot.name}: {written.Count} stills in {directory}";
         }
+
+        internal static double[] Quat(Quaternion rotation) => new[] { Math.Round(rotation.x, 5), Math.Round(rotation.y, 5), Math.Round(rotation.z, 5), Math.Round(rotation.w, 5) };
 
         /// <summary>
         /// Waits until every character recorded within 60 m of the shot's camera at the time has its object in the scene,
@@ -631,6 +699,7 @@ namespace cameraTools.Replay.Shots
                         catch (Exception audioError) { recordAudio = false; audioMethod = "cues only: " + audioError.Message; }
                     }
                     int index = 0;
+                    Framing logFraming = new(evaluator, Screen.width / (float)Mathf.Max(1, Screen.height));
                     // Half a frame of tolerance, so summing 1/fps steps cannot add a frame at the end.
                     while (replayTime < shot.end - 0.5f * step * evaluator.SpeedAt(replayTime) && !_cancel)
                     {
@@ -656,10 +725,13 @@ namespace cameraTools.Replay.Shots
                             buffer.Dispose();
                         }
                         Vector3 position = GameCamera.m_instance != null ? GameCamera.m_instance.transform.position : Vector3.zero;
+                        Quaternion rotation = GameCamera.m_instance != null ? GameCamera.m_instance.transform.rotation : _lastRotation;
                         frameLog.Add(new Dictionary<string, object>
                         {
                             ["frame"] = index, ["replayTime"] = Math.Round(replayTime, 4), ["outputTime"] = Math.Round(outputTime, 4),
-                            ["speed"] = Math.Round(evaluator.SpeedAt(replayTime), 3), ["camera"] = ReplayEvents.Round(position), ["fov"] = Math.Round(_lastFov, 2)
+                            ["speed"] = Math.Round(evaluator.SpeedAt(replayTime), 3), ["camera"] = ReplayEvents.Round(position), ["fov"] = Math.Round(_lastFov, 2),
+                            ["rotation"] = Quat(rotation), ["lookAt"] = ReplayEvents.Round(_lastLook), ["roll"] = Math.Round(_lastRoll, 2),
+                            ["framing"] = Framing.Json(logFraming.Measure(replayTime, position, rotation, _lastFov, rays: false), false)
                         });
                         index++;
                         outputTime += step;
@@ -676,7 +748,7 @@ namespace cameraTools.Replay.Shots
                     WriteCues(Path.Combine(root, shot.name + ".cues.json"), evaluator);
                     File.WriteAllText(Path.Combine(root, shot.name + ".render.json"), JsonConvert.SerializeObject(new Dictionary<string, object>
                     {
-                        ["shot"] = shot, ["fps"] = options.Fps, ["supersample"] = options.Supersample, ["width"] = Screen.width * options.Supersample, ["height"] = Screen.height * options.Supersample,
+                        ["shot"] = shot, ["shotFile"] = _shotPath, ["aspect"] = Math.Round(Screen.width / (float)Mathf.Max(1, Screen.height), 4), ["fps"] = options.Fps, ["supersample"] = options.Supersample, ["width"] = Screen.width * options.Supersample, ["height"] = Screen.height * options.Supersample,
                         ["frames"] = index, ["outputSeconds"] = Math.Round(index * step, 4), ["audio"] = audio.Count > 0 ? Path.GetFileName(wav) : audioMethod,
                         ["audioMethod"] = audioMethod, ["renderSeconds"] = Math.Round(clock.Elapsed.TotalSeconds, 2), ["cancelled"] = _cancel, ["frameLog"] = frameLog
                     }, Formatting.Indented));
@@ -783,6 +855,131 @@ namespace cameraTools.Replay.Shots
                 return process.ExitCode == 0 ? "" : "ffmpeg: " + errors.Trim();
             }
             catch (Exception failure) { return "ffmpeg not available: " + failure.Message; }
+        }
+
+        // ---------------------------------------------------------------- solve
+
+        /// <summary>
+        /// Searches for camera positions for each intent in the file (see <see cref="ShotSolver"/>) and writes the best shot
+        /// in each angle bin with its framing block, score and bin. Runs over many frames: poll ct_shot status until mode=idle.
+        /// </summary>
+        internal string Solve(string path, bool usePixels, int keep)
+        {
+            if (!ReplayPlayer.IsPlaying) throw new InvalidOperationException("Open the shot's replay first");
+            if (_mode == Mode.Render || _rendering) throw new InvalidOperationException("A render is running; use ct_shot render cancel");
+            if (_solving) throw new InvalidOperationException("A solve is running; poll ct_shot status");
+            SolveFile file = ShotSolver.Read(path);
+            ReplayPlayer player = ReplayPlayer.Instance;
+            string playing = Path.GetFileNameWithoutExtension(player.FilePath ?? player.File.Info.Name);
+            if (file.replay.Length > 0 && !string.Equals(file.replay, playing, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"The intents are for replay '{file.replay}' but '{playing}' is playing");
+            float aspect = 16f / 9f;
+            // Built first so a bad intent fails now, not halfway through.
+            List<ShotSolver> solvers = file.intents.Select(intent => new ShotSolver(this, intent, playing, aspect)).ToList();
+            string folder = file.@out.Length > 0 ? (Path.IsPathRooted(file.@out) ? file.@out : Path.Combine(Directory, file.@out)) : Path.GetDirectoryName(path)!;
+            _shotPath = path;
+            _solving = true;
+            StartCoroutine(SolveRoutine(solvers, folder, usePixels, keep));
+            return $"ACCEPTED: solving {solvers.Count} intents into {folder}; poll ct_shot status until mode=idle and no job";
+        }
+
+        private bool _solving;
+
+        private IEnumerator SolveRoutine(List<ShotSolver> solvers, string folder, bool usePixels, int keep)
+        {
+            Stopwatch clock = Stopwatch.StartNew();
+            List<string> written = new(), failed = new();
+            _cancel = false;
+            foreach (ShotSolver solver in solvers)
+            {
+                if (_cancel) break;
+                IEnumerator run = solver.Run(folder, usePixels, keep, text => _job = text);
+                while (true)
+                {
+                    object? current;
+                    try
+                    {
+                        if (!run.MoveNext()) break;
+                        current = run.Current;
+                    }
+                    catch (Exception error)
+                    {
+                        failed.Add(error.Message);
+                        cameraToolsPlugin.TemplateLogger.LogError($"[Shots] Solve failed: {error}");
+                        break;
+                    }
+                    yield return current;
+                }
+                written.AddRange(solver.Written.Select(Path.GetFileNameWithoutExtension));
+            }
+            _job = "";
+            _solving = false;
+            _jobResult = $"solve: wrote {written.Count} shots in {clock.Elapsed.TotalSeconds:F0}s folder={folder} shots={string.Join(",", written)}" + (failed.Count > 0 ? " errors=" + string.Join("; ", failed) : "");
+        }
+
+        // ---------------------------------------------------------------- measure a render again
+
+        /// <summary>
+        /// Measures a finished render again from the camera its frame log recorded, with the check's code, and compares
+        /// the subject's size and position with the shot's check report when there is one.
+        /// </summary>
+        internal string Measure(string target, float? aspectOverride)
+        {
+            if (!ReplayPlayer.IsPlaying) throw new InvalidOperationException("Open the shot's replay first");
+            string path = target.EndsWith(".render.json") ? target : System.IO.Directory.Exists(target)
+                ? System.IO.Directory.GetFiles(target, "*.render.json").FirstOrDefault() ?? throw new ArgumentException($"No .render.json in {target}")
+                : Path.Combine(Paths.ConfigPath, "cameraTools", "renders", target, target + ".render.json");
+            if (!File.Exists(path)) throw new ArgumentException($"Render log not found: {path}");
+            Newtonsoft.Json.Linq.JObject log = Newtonsoft.Json.Linq.JObject.Parse(File.ReadAllText(path));
+            ShotFile shot = log["shot"]!.ToObject<ShotFile>() ?? throw new ArgumentException("The render log has no shot");
+            ReplayPlayer player = ReplayPlayer.Instance;
+            ShotEvaluator evaluator = new(shot, player.Tracks, Heights(player), player.Events);
+            float aspect = aspectOverride ?? (log["aspect"] != null ? (float)log["aspect"]! : (float)log["width"]! / (float)log["height"]!);
+            Framing framing = new(evaluator, aspect);
+            List<FrameMeasure> measures = new();
+            int lastBin = -1;
+            foreach (Newtonsoft.Json.Linq.JToken frame in (Newtonsoft.Json.Linq.JArray)log["frameLog"]!)
+            {
+                if (frame["rotation"] is not Newtonsoft.Json.Linq.JArray rotation) throw new InvalidOperationException("This render's frame log has no rotation; render it again with this version");
+                float time = (float)frame["replayTime"]!;
+                int bin = Mathf.FloorToInt((time - shot.start) / 0.05f + 0.0001f);
+                if (bin == lastBin) continue;
+                lastBin = bin;
+                Vector3 camera = ShotEvaluator.Vector(frame["camera"], Vector3.zero);
+                Quaternion turn = new((float)rotation[0], (float)rotation[1], (float)rotation[2], (float)rotation[3]);
+                measures.Add(framing.Measure(time, camera, turn, (float)frame["fov"]!));
+            }
+            string output = Path.Combine(Path.GetDirectoryName(path)!, shot.name + ".measure.json");
+            float score = Framing.ShotScore(measures.Where(m => m.Subject != null).Select(m => m.Score).ToList());
+            string compare = "";
+            string? check = System.IO.Directory.Exists(Directory) ? System.IO.Directory.GetFiles(Directory, shot.name + ".check.json", SearchOption.AllDirectories)
+                .OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault() : null;
+            Dictionary<string, object?> comparison = new();
+            if (check != null && framing.SubjectId != null)
+            {
+                Newtonsoft.Json.Linq.JObject report = Newtonsoft.Json.Linq.JObject.Parse(File.ReadAllText(check));
+                float maxSize = 0f, maxCenter = 0f, maxTime = 0f; int compared = 0;
+                foreach (Newtonsoft.Json.Linq.JToken step in (Newtonsoft.Json.Linq.JArray?)report["series"] ?? new Newtonsoft.Json.Linq.JArray())
+                {
+                    float time = (float)step["t"]!;
+                    FrameMeasure? nearest = measures.OrderBy(m => Mathf.Abs(m.Time - time)).FirstOrDefault();
+                    Newtonsoft.Json.Linq.JToken? actor = step["actors"]?[framing.SubjectId];
+                    ActorFrame? mine = nearest?.Subject;
+                    if (nearest == null || actor == null || mine == null || Mathf.Abs(nearest.Time - time) > 0.02f) continue;
+                    compared++;
+                    maxTime = Mathf.Max(maxTime, Mathf.Abs(nearest.Time - time));
+                    maxSize = Mathf.Max(maxSize, Mathf.Abs((float)actor["size"]! - mine.Size));
+                    maxCenter = Mathf.Max(maxCenter, (new Vector2((float)actor["center"]![0]!, (float)actor["center"]![1]!) - mine.Center).magnitude);
+                }
+                comparison = new Dictionary<string, object?> { ["check"] = check, ["steps"] = compared, ["maxSizeDifference"] = Framing.R(maxSize), ["maxCenterDifference"] = Framing.R(maxCenter), ["maxTimeDifference"] = Framing.R(maxTime) };
+                compare = $" vsCheck steps={compared} maxSize={maxSize:F3} maxCenter={maxCenter:F3}";
+            }
+            File.WriteAllText(output, JsonConvert.SerializeObject(new Dictionary<string, object?>
+            {
+                ["shot"] = shot.name, ["render"] = path, ["aspect"] = Math.Round(aspect, 4), ["score"] = Framing.R(score), ["comparison"] = comparison,
+                ["series"] = measures.Select(m => Framing.Json(m, true)).ToList()
+            }, Formatting.Indented));
+            return $"OK: measured {measures.Count} steps score={score:F2}{compare} report={output}";
         }
 
         // ---------------------------------------------------------------- hand-made shots

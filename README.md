@@ -42,7 +42,8 @@ record [name] | record start [name] [--rate 30|60] | record stop | record status
 replay <file> | replay list | replay info <file> | replay events <file> | replay digest <file> [rate] | replay downsample <file> <new name> | replay folder | replay browser <open|close|status> | replay exit
 ct_grid <on|off|status> [spacing] | ct_grid cell <name> | ct_grid probe <x> <z>
 ct_trails <on|off|status> [user:id ...]
-ct_shot play <file> [from] | stop | status | check <file> [aspect] | preview <file> [times...|count N] [--overlays]
+ct_shot play <file> [from] | stop | status | check <file> [aspect] [--pixels [rate]] [--pixels-debug] | preview <file> [times...|count N] [--strip N] [--size WxH] [--overlays]
+ct_shot solve <intent file> [--no-pixels] [--keep N] | measure <render folder or .render.json> [aspect]
 ct_shot render <file> [--fps N] [--size WxH] [--supersample N] [--video] [--keep-frames] [--no-audio] [--fps-cap N] | render status | render cancel | render-all <folder> [options]
 ct_shot new <name> | key [time] | save [name]
 ct_replay state|status|media|targets|where <user:id>|digest [rate]|map [time|from-to] [sizeMeters] [pixels]|scene-export [margin]|tag [label]|tags|untag <id>|events [death|attack|damage|hit] [user:id]|target [user:id]|find [user:id]|view [user:id] <aim|attach|front|third|projectile>|detach|recorded [on|off|status]|follow <user:id> <x> <y> <z> [local]|pause|play|seek <seconds>|speed <0.1-4>|music [index]|volume <0-1>|ui [show|hide|toggle|status]|exit
@@ -278,14 +279,82 @@ A shot file is a camera move timed in replay seconds. While it plays it owns the
 | `keepInFrame` | actors the check requires on screen |
 | `hide` | `drops` hides dropped items and their loot beams while the shot runs |
 | `dof` | drives the game's depth of field: `focus` is `lookAt` or a distance in meters |
+| `framing` | what the shot is meant to show; the check measures against it (see [Framing](#framing)) |
 
 Commands:
 
 - `ct_shot play <file> [from]` plays the shot, from its start or from a replay time inside it (ACCEPTED; poll `ct_shot status` until `mode=hold`); `ct_shot stop` returns the clock to the replay controls.
-- `ct_shot check <file> [aspect]` steps through the shot every 0.05 s of replay time without rendering and reports each time range where the camera is under the terrain or inside an object, the view to the `lookAt` target is blocked (naming the object, or `terrain`), a `keepInFrame` actor is off screen or its centre is outside the middle 80% of the frame, or the camera is within 0.5 m of a body. An actor that died may leave the frame after its death. The report is also written to `<file>.check.json`.
-- `ct_shot preview <file> [times... | count N] [--overlays]` saves stills through the shot's camera to `shots/.../previews/<shot>-<time>.png`; with `count N` it uses N evenly spaced times plus every death and hit inside the shot.
+- `ct_shot check <file> [aspect] [--pixels [rate]] [--pixels-debug]` steps through the shot every 0.05 s of replay time, with the camera a render would have (look smoothing and shake included), without rendering. It reports each time range where the camera is under the terrain or inside an object, the view to the `lookAt` target is blocked (naming the object, or `terrain`), the view passes through or starts inside a tree's branches, a `keepInFrame` actor is off screen or its centre is outside the middle 80% of the frame, or the camera is within 0.5 m of a body, and the framing issues below. An actor that died may leave the frame after its death. The reply starts `OK: issues=N score=S`; the report, with the per-step framing series, is written to `<file>.check.json`. See [Framing](#framing) for `--pixels`.
+- `ct_shot preview <file> [times... | count N] [--overlays]` saves stills through the shot's camera to `shots/.../previews/<shot>-<time>.png`; with `count N` it uses N evenly spaced times plus every death and hit inside the shot. With `--strip N [--size WxH]` it saves N evenly spaced stills plus every death and hit and the framing moment at a fixed size (default 640x360, whatever the screen size), each twice: clean, and `<shot>-<time>-overlay.png` with the framing overlay. `<shot>.strip.json` holds each still's measurements.
+- `ct_shot solve <intent file> [--no-pixels] [--keep N]` searches for camera positions; see [Solve](#solve).
+- `ct_shot measure <render folder or .render.json> [aspect]` measures a finished render again from its frame log with the check's code, writes `<shot>.measure.json` beside it, and compares the subject's size and position with the shot's newest check report.
 - `ct_shot new <name>`, `ct_shot key [time]` and `ct_shot save [name]` build a shot by hand: each key stores the free camera at the current replay time.
 - `ct_fov <degrees|reset>` sets the field of view outside shots; `ct_status` reports field of view and roll.
+
+### Framing
+
+The `framing` block says what a shot is meant to show. Every field is optional; a shot without the block checks as before, with the framing defaults below.
+
+```json
+"framing": {"subject": "795620938:350156", "partner": "795620938:360271", "size": "full", "place": "left",
+            "minVisible": 0.6, "maxForeground": 0.15, "moment": 27.03, "weights": {"composition": 0}}
+```
+
+| Field | Meaning |
+|---|---|
+| `subject` | the featured actor. Default: the player among `keepInFrame`, else the first `keepInFrame` actor |
+| `partner` | the other fighter. Default: the next `keepInFrame` actor |
+| `size` | body height ÷ frame height: `extreme_wide` (0.03-0.15), `wide` (0.2-0.5), `full` (0.75-0.9), `knee` (1.2-1.4), `cowboy` (1.4-1.6), `medium` (2.2-2.5), `medium_close` (3.0-3.4), `close` (4.5-5.5), or `[min, max]`. Default: at least 0.33 (a featured player is never a speck) |
+| `place` | `left`, `centre` or `right` third, or `[x, y]` (frame 0-1, y up). Default: none (the centre must stay in the middle 80%) |
+| `minVisible` | the visible fraction each fighter needs. Default 0.6 |
+| `maxForeground` | the frame fraction foreground may cover. Default 0.15 |
+| `moment` | the impact time in replay seconds: the strike-frame rule applies there |
+| `weights` | score term weights: `visibility` 0.35, `size` 0.15, `position` 0.15, `margin` 0.15, `angle` 0.10, `composition` 0.10 |
+
+Each step measures every `keepInFrame` actor and the subject and partner from the recorded tracks, as vertical capsules of the recorded height and radius:
+
+- the projected box (both end circles of the capsule, not clipped to the frame) and head box; `size` (projected feet-to-head distance ÷ frame height); `center` (of the part of the box inside the frame); `headroom`; `lead` (space ahead ÷ space ahead and behind, toward the movement direction above 1 m/s, otherwise the facing direction; not measured when the actor faces within 30° of the camera or away from it); `inFrame` (the share of the box inside the frame); `visible`.
+- `visible`: rays from the camera to a 3 × 5 grid on the camera-facing side of the capsule plus the head, blocked by solid objects, tree canopies and other actors' capsules. Replay characters have no colliders, so the capsules come from the tracks; another actor blocks with its body reach (half the horizontal size of its prefab's meshes, times 0.5, at least its collider radius), because a collider is thinner than arms, wings and a leaning body. `bodies` in the report lists the radii used.
+- `foreground`: a 16 × 9 grid of screen rays; the share that hits anything, actors included, nearer than both 2 m and half the distance to the nearest framed subject (the subject, or an actor at least 80% in frame). `headCovered`: such a hit inside a subject's head box.
+- A creature more than 1.8 times the subject's height counts as `large`: its in-frame ratio uses only its body up to 1.3 times the subject's height, so a camera at the player's level may cut off its head.
+
+Framing issues, each with a time range and the worst `value`:
+
+| Issue | When |
+|---|---|
+| `subject_hidden` | a measured actor's visible fraction is under `minVisible` (the partner, like `pair_split`, only from 0.5 s before `moment`) |
+| `subject_size` | the subject's size is outside the intended range (without `size`: under 0.33) |
+| `subject_place` | the subject's centre is more than 0.15 of the frame width from `place` |
+| `pair_split` | the partner's in-frame ratio is under 0.8 (with a `moment`, only from 0.5 s before it: an attacker may run into the frame) |
+| `foreground_cover` | foreground over `maxForeground`, or touching a head box |
+| `no_lead_room` | the subject's lead ratio is under 0.6 for more than 0.3 s |
+| `edge_cut` | a frame edge within 3% of body height of the subject's ankle, knee, waist or neck |
+| `strike_frame` | at `moment`, the subject or partner is less than 95% in frame, its head is outside the frame, or it is less than `minVisible` visible |
+
+The score is 0 to 1. Each step's terms (visibility, size, position, margin, view angle, composition) are weighted by `weights`; the shot score is 0.7 × the mean + 0.3 × the 10th percentile of the step scores, so one bad moment is not hidden by the average. `check.json` holds `score`, `issues` and `series` (one entry per step: camera, direction, field of view, foreground, terms, and per actor its box, head box, size, centre, headroom, lead, in-frame ratio, visible fraction and distance).
+
+`--pixels [rate]` adds the exact pixel pass: at `rate` samples a second (default 10) the replay seeks, waits for the actors, and renders a small buffer (144 pixels high, at the check's aspect) through the same camera. Each measured actor is drawn in a flat colour over the scene's depth and over the other actors: `visible` is the pixels that pass the depth test ÷ the pixels of the actor drawn alone, `inFrame` the share of its pixels inside the frame (drawn alone with a view twice as wide), and `foreground` the share of the frame nearer than the foreground limit. It catches tree leaves, creature meshes and broken pieces that capsules and colliders miss (on mountainFight1 a Fenring hid the player completely while the rays reported 100% visible). The same issue types are reported with `"method": "pixels"`; `pixels.raysDiffer` lists the samples where the ray and pixel visible fractions differ by more than 0.2. It runs over several frames: the reply is `ACCEPTED`, then poll `ct_shot status` until no `job=`; `last=` gives the counts and the time it took (about 5-15 s for a 3 s shot). `--pixels-debug` also writes each sample's buffer to `shots/.../pixels/<shot>/`: red is the first actor's visible pixels, green the same actor drawn alone, blue the foreground.
+
+The overlay on `--strip` stills draws the thirds lines, a shaded 10% margin, each measured actor's box and head box labelled with its name and role, and under each box its size, visible fraction, lead ratio and brightness against the background in stops (`sep`; negative is darker than what is behind it).
+
+### Solve
+
+`ct_shot solve <intent file> [--no-pixels] [--keep N]` searches for camera positions and writes shot files. The intent file holds one intent or `{"replay", "out", "intents": [...]}`; `out` is a folder under `shots/` (default: the intent file's folder).
+
+```json
+{"name": "b08_fight", "subject": "795620938:350156", "partner": "795620938:360271", "moment": 27.03, "window": [25.53, 27.83],
+ "side": -1, "move": "static", "size": [0.35, 0.9], "place": null, "minVisible": 0.6, "maxForeground": 0.15,
+ "fovs": [40, 47, 55], "angles": 24, "heights": 8, "heightRange": [-5, 35], "keep": 4, "minScore": 0.6,
+ "speed": [], "shakeOnEvents": [], "hide": ["drops"], "note": ""}
+```
+
+- `side`: 1 or -1, the side of the line from subject to partner (1 is the left walking from the subject to the partner); 0 tries both. `move`: `static`, `push` (20% closer over the shot), `dolly` (sideways by a quarter of the distance), `orbit` (30° around the pair) or `track` (moves with the subject). The camera is at the searched position at `moment`; the look target follows the subject.
+- Candidates: toric-space placements around the two fighters (Lino and Christie 2015): `angles` positions on the arc from behind the partner to behind the subject on the allowed side × `heights` turns of the plane about the line between them over `heightRange` degrees × 3 fields of view (by size: full and wider 40/47/55°, cowboy and medium 30/35/40°, closer 18/22/25°). The anchors land at screen points set by the size (closer together in wider shots); the toric placement gives the direction, and the camera stands at the distance the intended size needs. Without a partner the camera circles the subject.
+- Hard rejects: a 0.4 m sphere at the camera touches a solid object or an actor's capsule; the camera is under 0.5 m above the surface; the camera is on the wrong side of the line at `moment`; the subject's in-frame ratio is under 0.8 at any step, or the partner's from 0.5 s before `moment`; the visible fraction is under 0.5 for more than 15% of steps (rays, then pixels).
+- The rest are scored over the whole shot with the check's score, the ten best and the best of each angle bin are refined with Nelder-Mead over arc, height, field of view and distance (32 evaluations each), checked in full, and the ten best plus the best of each bin are scored again with the pixel pass (4 samples a second; visibility from pixels), unless `--no-pixels`.
+- Angle bins, at `moment`: `high_wide` (camera 20° or more above the subject), `front` (within 25° of where the subject faces), `front_three_quarter` (25-70°), `side` (70-115°), `over_shoulder` (behind, nearer the subject than the partner, within 4.5 m) and `back` (behind otherwise).
+- A shot passes with no `subject_hidden`, `pair_split`, `strike_frame`, `foreground_cover`, `subject_size` or `subject_place` issue and a score of at least `minScore`. When nothing passes, the solver drops constraints in this order: composition (and `subject_place`), then view angle, then size (and `subject_size`), then a wider shot size. It never relaxes visibility.
+- It writes the best passing shot of each bin, up to `keep` (default 4), as `<name>_<bin>.json` with the `framing` block, `score`, `bin`, `pass` and `solve` (search parameters, ray and pixel scores, relaxed constraints, issues), and `<name>.solve.json` with the search report: evaluations, reject counts by reason with examples, stages, and every finalist. It runs over many frames (about 1.5-4 minutes per intent): the reply is `ACCEPTED`; poll `ct_shot status` until no `job=`.
 
 ### Rendering
 
@@ -296,7 +365,7 @@ Commands:
 - Frames are the final game image without the HUD, the Camera Tools window, the console, the cursor or the guides.
 - `--fps N` (default 60), `--size WxH` (changes the game resolution for the render), `--supersample N` (renders N times larger), `--video` (encodes `<shot>.mp4` with ffmpeg and then deletes the frames unless `--keep-frames`), `--no-audio`, `--overlays` (keeps the guides), `--fps-cap N` (test option: caps the game frame rate while rendering).
 - Audio: the game's mixed output is captured frame by frame with Unity's offline audio capture into `<shot>.wav`. `<shot>.cues.json` lists every recorded sound that starts in the shot in output seconds, with its position relative to the camera, for an edit to rebuild.
-- `<shot>.render.json` holds the shot, settings, frame count and the replay time, output time, speed, camera position and field of view of every frame.
+- `<shot>.render.json` holds the shot, settings, frame count and, for every frame, the replay time, output time, speed, camera position, rotation (quaternion `[x, y, z, w]`), look target, roll, field of view and `framing` (size, centre and in-frame ratio of the subject, partner and `keepInFrame` actors), so a finished render can be measured again (`ct_shot measure`) and an edit can check its cuts.
 - `ct_shot render-all <folder> [options]` queues every shot file in a folder; `ct_shot render status` reports `PENDING: ... queue=N` until all are done; `ct_shot render cancel` stops after the current frame.
 
 ## Build

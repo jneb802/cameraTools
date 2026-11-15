@@ -29,6 +29,8 @@ namespace cameraTools.Replay.Shots
         /// <summary>What to hide while the shot runs: "drops" hides dropped items and their loot beams.</summary>
         public List<string> hide = new();
         public DofSettings? dof;
+        /// <summary>What the shot is meant to show; the check measures framing against it. See <see cref="FramingSpec"/>.</summary>
+        public FramingSpec? framing;
         /// <summary>Free text for the agent or editor: what the shot is for.</summary>
         public string note = "";
     }
@@ -142,6 +144,20 @@ namespace cameraTools.Replay.Shots
             foreach (string actor in Shot.keepInFrame) _tracks.Get(actor);
             foreach (SpeedKey key in Shot.speed)
                 if (key.speed < 0.05f || key.speed > 4f) throw new ArgumentException($"Speed {key.speed} at {key.t} must be from 0.05 to 4");
+            if (Shot.framing is FramingSpec framing)
+            {
+                if (framing.subject != null) _tracks.Get(framing.subject);
+                if (framing.partner != null) _tracks.Get(framing.partner);
+                if (framing.subject == null && Shot.keepInFrame.Count == 0) throw new ArgumentException("framing needs a subject, or keepInFrame actors to take it from");
+                Framing.ParseSize(framing.size);
+                Framing.ParsePlace(framing.place, 16f / 9f);
+                if (framing.minVisible is float visible && (visible < 0f || visible > 1f)) throw new ArgumentException($"framing.minVisible {visible} must be from 0 to 1");
+                if (framing.maxForeground is float foreground && (foreground < 0f || foreground > 1f)) throw new ArgumentException($"framing.maxForeground {foreground} must be from 0 to 1");
+                if (framing.moment is float moment && (moment < Shot.start || moment > Shot.end)) throw new ArgumentException($"framing.moment {moment} is outside the shot ({Shot.start}-{Shot.end})");
+                if (framing.weights != null)
+                    foreach (string name in framing.weights.Keys)
+                        if (!Framing.DefaultWeights.ContainsKey(name)) throw new ArgumentException($"framing.weights has unknown term '{name}'; use {string.Join(", ", Framing.DefaultWeights.Keys)}");
+            }
         }
 
         private ActorTrack? Actor(JToken token) =>
