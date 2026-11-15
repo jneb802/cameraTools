@@ -85,5 +85,26 @@ namespace cameraTools.Replay
                     WindAngle = reader.ReadSingle(), WindIntensity = reader.ReadSingle()
                 });
         }
+
+        internal static void WriteStructures(BinaryWriter writer, ReplayFile replay)
+        {
+            writer.Write(replay.Structures.Count);
+            foreach (StructureTrack track in replay.Structures)
+            {
+                writer.Write(track.Name); ReplayMediaIO.Vector(writer, track.Position); ReplayMediaIO.Rotation(writer, track.Rotation);
+                writer.Write(track.Start); writer.Write(track.End);
+            }
+        }
+
+        internal static void ReadStructures(BinaryReader reader, ReplayFile replay)
+        {
+            int count = ReplayMediaIO.Count(reader);
+            for (int index = 0; index < count; index++)
+                replay.Structures.Add(new StructureTrack
+                {
+                    Name = reader.ReadString(), Position = ReplayMediaIO.Vector(reader), Rotation = ReplayMediaIO.Rotation(reader),
+                    Start = reader.ReadSingle(), End = reader.ReadSingle()
+                });
+        }
     }
 }

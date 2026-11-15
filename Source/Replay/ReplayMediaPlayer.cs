@@ -62,10 +62,8 @@ namespace cameraTools.Replay
                 }
                 if (!_effects.TryGetValue(track, out var effect))
                 {
-                    GameObject? prefab = ZNetScene.instance?.GetPrefab(track.Prefab);
-                    if (prefab == null) _prefabs.TryGetValue(track.Prefab, out prefab);
-                    if (prefab == null) { Missing("effect " + track.Prefab); continue; }
-                    GameObject root = GhostManager.CreateVisual(prefab, Vector3.zero, Quaternion.identity);
+                    GameObject? root = Create(track.Prefab, track.Frames[0]);
+                    if (root == null) { Missing("effect " + track.Prefab); continue; }
                     effect = (root, new VisualPlayer(root)); _effects[track] = effect;
                 }
                 effect.Root.SetActive(true);
@@ -127,6 +125,21 @@ namespace cameraTools.Replay
                     source.mute = true;
                 }
             }
+        }
+
+        // A mod that reported its own visual may build it (LineRenderers have no prefab); otherwise the
+        // effect is rebuilt from the prefab of that name.
+        private GameObject? Create(string name, EffectFrame first)
+        {
+            GameObject? built = ReplayHooks.Build(name, first.Position, first.Rotation);
+            if (built != null)
+            {
+                foreach (Collider collider in built.GetComponentsInChildren<Collider>(true)) collider.enabled = false;
+                return built;
+            }
+            GameObject? prefab = ZNetScene.instance?.GetPrefab(name);
+            if (prefab == null) _prefabs.TryGetValue(name, out prefab);
+            return prefab != null ? GhostManager.CreateVisual(prefab, Vector3.zero, Quaternion.identity) : null;
         }
 
         private static int Index<T>(List<T> frames, float time, System.Func<T, float> getTime)

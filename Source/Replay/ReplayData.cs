@@ -115,7 +115,7 @@ namespace cameraTools.Replay
     public class ReplayFile
     {
         public const string Magic = "VRPL";
-        public const int Version = 10;
+        public const int Version = 11;
 
         /// <summary>The format version the file was saved with; older files lack some data.</summary>
         public int FileVersion = Version;
@@ -138,6 +138,8 @@ namespace cameraTools.Replay
         public List<SceneObject> Scene = new();
         public List<TerrainPatch> Terrain = new();
         public List<EnvironmentSample> Environment = new();
+        /// <summary>Mod-built rooms and other still objects without a ZDO (version 11 and later).</summary>
+        public List<StructureTrack> Structures = new();
         /// <summary>Samples per second the take was recorded at; 30 for files before version 10.</summary>
         public float SampleRate = 30f;
         /// <summary>The recording player's character, or (0, 0) when unknown (files before version 10).</summary>

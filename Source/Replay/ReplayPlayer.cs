@@ -18,6 +18,9 @@ namespace cameraTools.Replay
         private int _lastTriggerIndex;
         private WorldStatePlayer? _worldStatePlayer;
         private SceneTimelinePlayer? _scene;
+        private StructurePlayer? _structures;
+        /// <summary>Mod structures (encounter rooms) rebuilt in a replay session; null over a loaded world.</summary>
+        internal StructurePlayer? Structures => _structures;
         private EnvironmentPlayer? _environment;
         private bool _recordedCamera;
         /// <summary>True when the replay runs in its own session instead of over a loaded world.</summary>
@@ -186,6 +189,9 @@ namespace cameraTools.Replay
                 System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
                 _scene = new SceneTimelinePlayer(replay);
                 _scene.Seek(0f);
+                // Rooms the recording's mods built on every client have no ZDO; their mods rebuild them here.
+                _structures = new StructurePlayer(replay);
+                _structures.Update(0f);
                 cameraToolsPlugin.TemplateLogger.LogInfo($"[ReplayPlayer] Loaded the recorded world in {clock.ElapsedMilliseconds} ms");
             }
             else if (replay.WorldEvents.Count > 0)
@@ -222,6 +228,8 @@ namespace cameraTools.Replay
             if (_environment != null) EnvironmentPlayer.Restore();
             _environment = null;
             _scene = null;
+            _structures?.Dispose();
+            _structures = null;
             _recordedCamera = false;
             Isolated = false;
             _media?.Dispose();
@@ -265,6 +273,7 @@ namespace cameraTools.Replay
 
             _worldStatePlayer?.SeekTo(_playbackTime);
             _scene?.Seek(_playbackTime);
+            _structures?.Update(_playbackTime);
             _environment?.Seek(_playbackTime);
         }
 
@@ -314,6 +323,7 @@ namespace cameraTools.Replay
 
             // Interpolate and update ghosts from frameA
             _scene?.Update(_playbackTime);
+            _structures?.Update(_playbackTime);
             foreach (var a in frameA.Entities)
             {
                 var key = (a.ZdoUserID, a.ZdoID);
