@@ -114,8 +114,20 @@ namespace cameraTools.Replay.Shots
             List<CameraFrame> frames = new();
             ShotFile shot = evaluator.Shot;
             float step = 1f / fps;
-            float time = shot.start;
             Vector3? smooth = null;
+            // A render warms up from 2 s before the start at normal speed, and its aim eases toward the target all that
+            // time; doing the same here makes the check measure the frames the render will show.
+            if (shot.lookSmoothing > 0f)
+            {
+                float warm = Mathf.Max(0f, shot.start - 2f);
+                smooth = evaluator.Evaluate(warm).LookAt;
+                for (float t = warm; t < shot.start - 0.0001f; t = Mathf.Min(shot.start, t + step))
+                {
+                    Vector3 target = evaluator.Evaluate(Mathf.Min(shot.start, t + step)).LookAt;
+                    smooth = Vector3.Lerp(smooth.Value, target, 1f - Mathf.Exp(-step / shot.lookSmoothing));
+                }
+            }
+            float time = shot.start;
             while (true)
             {
                 ShotPose pose = evaluator.Evaluate(Mathf.Min(time, shot.end));
