@@ -46,7 +46,10 @@ namespace cameraTools.Replay.Shots
         public float t;
         /// <summary>[x, y, z] world point, or {"actor": "user:id", "offset": [x, y, z], "frame": "world"|"actor"}.</summary>
         public JToken? position;
-        /// <summary>[x, y, z] world point, or {"actor": "user:id", "height": 0-1 of body height, "offset": [x, y, z]}.</summary>
+        /// <summary>
+        /// [x, y, z] world point, or {"actor": "user:id", "height": 0-1 of body height, "offset": [x, y, z]}; with
+        /// "between": "user:id" the target is the midpoint of the two actors (each at "height" of its own body).
+        /// </summary>
         public JToken? lookAt;
         public float? fov;
         public float? roll;
@@ -139,6 +142,7 @@ namespace cameraTools.Replay.Shots
                 if (key.position == null) throw new ArgumentException($"Camera key at {key.t} has no position");
                 if (key.lookAt == null) throw new ArgumentException($"Camera key at {key.t} has no lookAt");
                 Actor(key.position); Actor(key.lookAt);
+                if (key.lookAt is JObject look && look["between"] != null) _tracks.Get((string)look["between"]!);
                 Ease(key.ease);
             }
             foreach (string actor in Shot.keepInFrame) _tracks.Get(actor);
@@ -205,7 +209,15 @@ namespace cameraTools.Replay.Shots
             float fraction = token["height"] != null ? (float)token["height"]! : 0.6f;
             Vector3 offset = Vector(token["offset"], Vector3.zero);
             if (string.Equals((string?)token["frame"], "actor", StringComparison.OrdinalIgnoreCase)) offset = Quaternion.Euler(0f, rotation.eulerAngles.y, 0f) * offset;
-            return position + Vector3.up * Height(track) * fraction + offset;
+            Vector3 target = position + Vector3.up * Height(track) * fraction;
+            if (token["between"] != null)
+            {
+                // The midpoint of the two actors; an actor that died holds its last recorded place.
+                ActorTrack other = _tracks.Get((string)token["between"]!);
+                (Vector3 otherPosition, _) = ActorPose(other, time);
+                target = (target + otherPosition + Vector3.up * Height(other) * fraction) * 0.5f;
+            }
+            return target + offset;
         }
 
         public float SpeedAt(float time)

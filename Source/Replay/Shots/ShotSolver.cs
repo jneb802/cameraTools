@@ -226,6 +226,8 @@ namespace cameraTools.Replay.Shots
                     if (Vector3.Cross(rayA, rayB).sqrMagnitude < 1e-8f || Vector3.Cross(worldA, worldB).sqrMagnitude < 1e-8f) return null;
                     Quaternion rotation = world * Quaternion.Inverse(screen);
                     Vector3 forward = rotation * Vector3.forward;
+                    // Without an intended place, aim between the two fighters so both stay in the frame when they are far apart.
+                    if (_intent.place == null || _intent.place.Type == JTokenType.Null) forward = (middle - camera).normalized;
                     return (camera, Quaternion.LookRotation(forward, Vector3.up));
                 }
             }
@@ -281,7 +283,13 @@ namespace cameraTools.Replay.Shots
             Vector3 forward = rotation * Vector3.forward;
             float distance = Vector3.Distance(camera, feet + Vector3.up * Height(_subject) * 0.5f);
             Vector3 look = camera + forward * distance;
+            // A two-shot without an intended place follows the midpoint of the fighters; otherwise the look follows the subject.
             JObject lookAt = new() { ["actor"] = _intent.subject, ["height"] = 0, ["offset"] = Point(look - feet) };
+            if (_partner != null && (_intent.place == null || _intent.place.Type == JTokenType.Null))
+            {
+                Vector3 middle = (feet + Feet(_partner, time)) * 0.5f;
+                lookAt = new JObject { ["actor"] = _intent.subject, ["between"] = _intent.partner, ["height"] = 0, ["offset"] = Point(look - middle) };
+            }
             float fraction = (time - start) / Mathf.Max(0.01f, end - start);
             List<CameraKey> keys = new();
             CameraKey Key(float t, JToken position) => new() { t = (float)Math.Round(t, 3), position = position, lookAt = lookAt.DeepClone(), fov = (float)Math.Round(fov, 2), ease = "linear" };
@@ -573,10 +581,13 @@ namespace cameraTools.Replay.Shots
             }
             // A wider search that met no hard rule leaves the last stage that had candidates.
             finalists = kept;
-            // The best passing shot in each angle bin; without any, the best that met the hard rejects, marked as failing.
-            List<Candidate> passing = finalists.Where(c => c.Pass).ToList();
-            List<Candidate> chosen = (passing.Count > 0 ? passing : finalists.Where(c => c.PixelReject == null || !usePixels).ToList())
-                .GroupBy(c => c.Bin).Select(g => g.OrderByDescending(c => c.Score).First()).OrderByDescending(c => c.Score).Take(keep).ToList();
+            // The best passing shot in each angle bin, then, for bins without one, the best shot that met the hard rules
+            // (marked "pass": false), so the edit has distinct angles to choose from.
+            List<Candidate> chosen = finalists.Where(c => c.Pass).GroupBy(c => c.Bin).Select(g => g.OrderByDescending(c => c.Score).First())
+                .OrderByDescending(c => c.Score).Take(keep).ToList();
+            foreach (Candidate candidate in finalists.Where(c => !c.Pass && (c.PixelReject == null || !usePixels)).GroupBy(c => c.Bin)
+                .Select(g => g.OrderByDescending(c => c.Score).First()).OrderByDescending(c => c.Score))
+                if (chosen.Count < keep && chosen.All(c => c.Bin != candidate.Bin)) chosen.Add(candidate);
             string directory = folder;
             Directory.CreateDirectory(directory);
             foreach (Candidate candidate in chosen)
