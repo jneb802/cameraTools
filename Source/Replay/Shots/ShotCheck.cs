@@ -65,8 +65,8 @@ namespace cameraTools.Replay.Shots
             Range range = _open[key];
             _open.Remove(key);
             string[] parts = key.Split('|');
-            // A lack of lead room matters only when it lasts more than 0.3 s.
-            if (parts[0] == "no_lead_room" && range.To - range.From < 0.3f) return;
+            // A lack of lead room matters only when it lasts 0.3 s or more; low night separation from two samples in a row.
+            if ((parts[0] == "no_lead_room" && range.To - range.From < 0.3f) || (parts[0] == "low_separation" && range.To - range.From < Framing.LowSeparationSeconds - 0.001f)) return;
             Dictionary<string, object?> issue = new()
             {
                 ["type"] = parts[0], ["subject"] = parts.Length > 1 ? parts[1] : "", ["from"] = Math.Round(range.From, 2), ["to"] = Math.Round(range.To, 2),
@@ -200,7 +200,7 @@ namespace cameraTools.Replay.Shots
                 if (framing.SubjectTrack == null) { ranges.Step(); continue; }
                 FrameMeasure frame = framing.Measure(time, step.Position, step.Rotation, step.Fov);
                 analysis.Steps.Add(frame);
-                if (frame.Subject != null) { scores.Add(frame.Score); measuredSteps++; }
+                if (frame.Subject != null && framing.InAction(time)) { scores.Add(frame.Score); measuredSteps++; }
                 // The strike frame is the last step at or before the moment: a victim's track ends when it dies at the moment.
                 if (framing.Moment is float moment && time <= moment + 0.001f && moment - time < momentGap) { momentGap = moment - time; momentFrame = frame; }
                 if (settings.HardRejects)
@@ -275,6 +275,8 @@ namespace cameraTools.Replay.Shots
             ReplayPlayer player = framing.Player;
             foreach (string actor in evaluator.Shot.keepInFrame)
             {
+                // A locked-off shot lets its actors enter and leave the frame outside the action range.
+                if (!framing.InAction(time)) continue;
                 ActorTrack track = player.Tracks.Get(actor);
                 if (!track.Sample(time, out Vector3 feet, out _))
                 {
@@ -306,9 +308,11 @@ namespace cameraTools.Replay.Shots
             {
                 if (actor.Visible < framing.MinVisible && framing.PartnerCounts(actor, time))
                     ranges.Mark("subject_hidden", actor.Id, time, $"{actor.Name} ({actor.Role}) {actor.Visible:P0} visible, needs {framing.MinVisible:P0}", actor.Visible);
-                if (actor.Role == "partner" && actor.InFrame < 0.8f && framing.PartnerCounts(actor, time))
-                    ranges.Mark("pair_split", actor.Id, time, $"{actor.Name} {actor.InFrame:P0} in frame, needs 80%", actor.InFrame);
-                if (actor.Role != "subject") continue;
+                if (actor.Role == "partner" && actor.InFrame < Framing.InFrameNeeded && framing.PartnerCounts(actor, time))
+                    ranges.Mark("pair_split", actor.Id, time, $"{actor.Name} {actor.InFrame:P0} in frame, needs {Framing.InFrameNeeded:P0}", actor.InFrame);
+                if (actor.Role != "subject" || !framing.InAction(time)) continue;
+                if (actor.InFrame < Framing.InFrameNeeded)
+                    ranges.Mark("subject_cut", actor.Id, time, $"{actor.Name} {actor.InFrame:P0} in frame, needs {Framing.InFrameNeeded:P0}", actor.InFrame);
                 (float min, float max) = framing.SizeRange;
                 if (actor.Size < min || actor.Size > max)
                 {
@@ -326,6 +330,11 @@ namespace cameraTools.Replay.Shots
                 if (Framing.EdgeCut(actor) is string joint)
                     ranges.Mark("edge_cut", actor.Id, time, $"a frame edge cuts {actor.Name} at the {joint}");
             }
+            if (!framing.InAction(time)) return;
+            if (frame.PairSpread is float spread && spread > Framing.MaxPairSpread)
+                ranges.Mark("pair_spread", "", time, $"the fighters span {spread:P0} of the frame width, limit {Framing.MaxPairSpread:P0}", spread, false);
+            if (frame.InFront > Framing.MaxInFront)
+                ranges.Mark("actor_in_front", frame.InFrontName, time, $"{frame.InFrontName} covers {frame.InFront:P0} of the frame nearer than the subject, limit {Framing.MaxInFront:P0}", frame.InFront, false);
             if (frame.Foreground > framing.MaxForeground || frame.HeadCovered)
                 ranges.Mark("foreground_cover", "", time, frame.HeadCovered ? $"foreground covers a head box ({frame.Foreground:P0} of the frame)"
                     : $"foreground covers {frame.Foreground:P0} of the frame, limit {framing.MaxForeground:P0}", frame.Foreground, false);

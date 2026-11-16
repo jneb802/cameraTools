@@ -158,6 +158,8 @@ namespace cameraTools.Replay.Shots
                 if (framing.minVisible is float visible && (visible < 0f || visible > 1f)) throw new ArgumentException($"framing.minVisible {visible} must be from 0 to 1");
                 if (framing.maxForeground is float foreground && (foreground < 0f || foreground > 1f)) throw new ArgumentException($"framing.maxForeground {foreground} must be from 0 to 1");
                 if (framing.moment is float moment && (moment < Shot.start || moment > Shot.end)) throw new ArgumentException($"framing.moment {moment} is outside the shot ({Shot.start}-{Shot.end})");
+                if (framing.action != null && (framing.action.Length != 2 || framing.action[1] < framing.action[0] || framing.action[0] > Shot.end || framing.action[1] < Shot.start))
+                    throw new ArgumentException("framing.action is [from, to] replay seconds inside the shot");
                 if (framing.weights != null)
                     foreach (string name in framing.weights.Keys)
                         if (!Framing.DefaultWeights.ContainsKey(name)) throw new ArgumentException($"framing.weights has unknown term '{name}'; use {string.Join(", ", Framing.DefaultWeights.Keys)}");
