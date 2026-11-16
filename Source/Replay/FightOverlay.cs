@@ -116,13 +116,30 @@ namespace cameraTools.Replay
             return $"cell={name.ToUpperInvariant()} center={F(x)},{F(y)},{F(z)} min={F(origin.x + column * Major)},{F(origin.z + row * Major)} max={F(origin.x + (column + 1) * Major)},{F(origin.z + (row + 1) * Major)}";
         }
 
+        /// <summary>
+        /// Where a downward surface probe at (x, z) starts for a fight at height <paramref name="level"/>: just under the
+        /// first solid surface above the fight, so a room's or a building's roof does not hide its floor, or high above
+        /// everything under open sky. Encounter rooms from mods can sit thousands of metres above the terrain.
+        /// </summary>
+        internal static float ProbeStart(float x, float z, float level)
+        {
+            if (Physics.Raycast(new Vector3(x, level + 2f, z), Vector3.up, out RaycastHit ceiling, 500f, SurfaceMask, QueryTriggerInteraction.Ignore))
+                return ceiling.point.y - 0.05f;
+            return Mathf.Max(2000f, level + 500f);
+        }
+
+        /// <summary>Probe length from <see cref="ProbeStart"/> down past the lowest terrain.</summary>
+        internal static float ProbeLength(float start) => start + 1000f;
+
         /// <summary>The surface and terrain height straight below a point, measured the same way the scene export measures them.</summary>
         internal static string Probe(float x, float z)
         {
-            Vector3 from = new(x, 2000f, z);
-            string top = Physics.Raycast(from, Vector3.down, out RaycastHit hit, 4000f, SurfaceMask, QueryTriggerInteraction.Ignore)
+            float level = ReplayPlayer.IsPlaying ? Layout(ReplayPlayer.Instance).Origin.y : 0f;
+            Vector3 from = new(x, ProbeStart(x, z, level), z);
+            Vector3 high = new(x, Mathf.Max(2000f, from.y), z);
+            string top = Physics.Raycast(from, Vector3.down, out RaycastHit hit, ProbeLength(from.y), SurfaceMask, QueryTriggerInteraction.Ignore)
                 ? $"surface={F(hit.point.y)} object={(hit.collider.gameObject.layer == LayerMask.NameToLayer("terrain") ? "terrain" : Utils.GetPrefabName(hit.collider.GetComponentInParent<ZNetView>()?.gameObject ?? hit.collider.transform.root.gameObject))}" : "surface=none";
-            string ground = Physics.Raycast(from, Vector3.down, out RaycastHit floor, 4000f, LayerMask.GetMask("terrain"), QueryTriggerInteraction.Ignore) ? $"terrain={F(floor.point.y)}" : "terrain=none";
+            string ground = Physics.Raycast(high, Vector3.down, out RaycastHit floor, ProbeLength(high.y), LayerMask.GetMask("terrain"), QueryTriggerInteraction.Ignore) ? $"terrain={F(floor.point.y)}" : "terrain=none";
             return $"x={F(x)} z={F(z)} {top} {ground}";
         }
 
@@ -178,8 +195,8 @@ namespace cameraTools.Replay
 
         private float Height(float x, float z, float fallback)
         {
-            Vector3 from = new(x, 2000f, z);
-            return Physics.Raycast(from, Vector3.down, out RaycastHit hit, 4000f, SurfaceMask, QueryTriggerInteraction.Ignore) ? hit.point.y : fallback;
+            Vector3 from = new(x, ProbeStart(x, z, fallback), z);
+            return Physics.Raycast(from, Vector3.down, out RaycastHit hit, ProbeLength(from.y), SurfaceMask, QueryTriggerInteraction.Ignore) ? hit.point.y : fallback;
         }
 
         private void BuildGrid()
@@ -421,6 +438,8 @@ namespace cameraTools.Replay
             {
                 float top = center.y + 150f;
                 foreach (ActorTrack track in player.Tracks.All) if (track.Kind == 0) top = Mathf.Max(top, track.Positions.Max(p => p.y) + 100f);
+                // Under a room's roof the map looks down from just below the roof.
+                top = Mathf.Min(top, ProbeStart(center.x, center.z, center.y) - 0.5f);
                 holder.transform.position = new Vector3(center.x, top, center.z);
                 holder.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
                 _mapCamera = holder.AddComponent<Camera>();
@@ -515,9 +534,10 @@ namespace cameraTools.Replay
                 double?[] top = new double?[width], ground = new double?[width];
                 for (int column = 0; column < width; column++)
                 {
-                    Vector3 from = new(minX + column, 2000f, minZ + row);
-                    top[column] = Physics.Raycast(from, Vector3.down, out RaycastHit hit, 4000f, SurfaceMask, QueryTriggerInteraction.Ignore) ? Math.Round(hit.point.y, 2) : null;
-                    ground[column] = Physics.Raycast(from, Vector3.down, out RaycastHit floor, 4000f, terrainMask, QueryTriggerInteraction.Ignore) ? Math.Round(floor.point.y, 2) : null;
+                    float x = minX + column, z = minZ + row;
+                    Vector3 from = new(x, ProbeStart(x, z, origin.y), z), high = new(x, Mathf.Max(2000f, from.y), z);
+                    top[column] = Physics.Raycast(from, Vector3.down, out RaycastHit hit, ProbeLength(from.y), SurfaceMask, QueryTriggerInteraction.Ignore) ? Math.Round(hit.point.y, 2) : null;
+                    ground[column] = Physics.Raycast(high, Vector3.down, out RaycastHit floor, ProbeLength(high.y), terrainMask, QueryTriggerInteraction.Ignore) ? Math.Round(floor.point.y, 2) : null;
                 }
                 surface.Add(top); terrain.Add(ground);
             }
@@ -555,7 +575,7 @@ namespace cameraTools.Replay
                 ["columns"] = width, ["rows"] = depth,
                 ["layout"] = "heights[row][column] is the surface at x = origin[0] + column, z = origin[1] + row. null where nothing was hit",
                 ["heights"] = surface,
-                ["heightsDescription"] = "top surface: terrain, building pieces, rocks, trees and other solid objects",
+                ["heightsDescription"] = "top surface: terrain, building pieces, rocks, trees and other solid objects, measured from just under any roof or ceiling above the fight",
                 ["terrainHeights"] = terrain,
                 ["obstacles"] = obstacles,
                 ["obstaclesDescription"] = "each solid world object's combined collider bounds (characters excluded); top is the highest point"

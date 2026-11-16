@@ -48,6 +48,7 @@ namespace cameraTools
             "ct_replay recorded [on|off|status] - follow the camera used while recording. ct_replay follow <user:id> <x> <y> <z> [local] - fixed offset.",
             "ct_replay music [index] | volume <0-1> - replay music. ct_replay ui [show|hide|toggle|status] - the window on its Replay tab.",
             "ct_replay media - recorded effects, sounds and deaths. ct_replay exit - leave the replay (session: ACCEPTED, poll state until menu).",
+            "ct_replay structures - recorded mod rooms, whether each is shown now and how many scene roots carry its name.",
             "ct_replay where <user:id> - the actor's recorded position, facing and health now. ct_replay digest [rate] - writes <file>.digest.json (ACCEPTED; repeat until OK).",
             "replay digest <file> [rate] - the same from the main menu (sizes and sun need a session). replay downsample <file> <new name> - test copy with every other frame.",
             "record start [name] --rate 30|60 - samples a second for this take; the setting Recording.SampleRate sets the default (60).",
