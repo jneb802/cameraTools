@@ -20,8 +20,13 @@ namespace cameraTools.Replay.Shots
         public float[]? window;
         /// <summary>1 or -1: the side of the line from subject to partner (positive is to the left walking from subject to partner); 0 for either.</summary>
         public int side;
-        /// <summary>static, push, dolly, orbit or track.</summary>
+        /// <summary>static, push, dolly, orbit, track or locked (camera and aim both fixed; the action plays through the frame).</summary>
         public string move = "static";
+        /// <summary>
+        /// [from, to] replay seconds where the framing rules apply (see FramingSpec.action). A locked shot defaults to
+        /// 0.6 s before the moment to 0.4 s after it.
+        /// </summary>
+        public float[]? action;
         public JToken? size;
         public JToken? place;
         public float? minVisible;
@@ -72,6 +77,8 @@ namespace cameraTools.Replay.Shots
             public bool Pass;
             public List<string> Failures = new();
             public List<PixelSample>? Samples;
+            /// <summary>Pixel-pass problems that lower the score without rejecting the shot: low_separation, clutter.</summary>
+            public List<string> PixelIssues = new();
         }
 
         private readonly ShotPlayer _player;
@@ -102,7 +109,7 @@ namespace cameraTools.Replay.Shots
             if (intent.side is < -1 or > 1) throw new ArgumentException("side is 1, -1 or 0");
             if (intent.heightRange is not { Length: 2 } || intent.heightRange[1] < intent.heightRange[0]) throw new ArgumentException("heightRange is [low, high] in degrees");
             if (intent.angles < 1 || intent.heights < 1) throw new ArgumentException("angles and heights must be at least 1");
-            if (!new[] { "static", "push", "dolly", "orbit", "track" }.Contains(intent.move)) throw new ArgumentException($"move '{intent.move}' must be static, push, dolly, orbit or track");
+            if (!new[] { "static", "push", "dolly", "orbit", "track", "locked" }.Contains(intent.move)) throw new ArgumentException($"move '{intent.move}' must be static, push, dolly, orbit, track or locked");
             Framing.ParseSize(intent.size ?? "full");
             Framing.ParsePlace(intent.place, aspect);
             (float start, float end) = Window();
@@ -228,6 +235,8 @@ namespace cameraTools.Replay.Shots
                     Vector3 forward = rotation * Vector3.forward;
                     // Without an intended place, aim between the two fighters so both stay in the frame when they are far apart.
                     if (_intent.place == null || _intent.place.Type == JTokenType.Null) forward = (middle - camera).normalized;
+                    // A locked frame is composed on where the fight happens over the action range, not on one moment.
+                    if (_intent.move == "locked") forward = (ActionCentre(anchorHeight) - camera).normalized;
                     return (camera, Quaternion.LookRotation(forward, Vector3.up));
                 }
             }
@@ -238,6 +247,30 @@ namespace cameraTools.Replay.Shots
             Vector3 direction = facing * Quaternion.Euler(-heightDeg, yaw, 0f) * Vector3.forward;
             Vector3 position = a + direction * distance;
             return (position, Aim(position, a, placeA, fov));
+        }
+
+        /// <summary>The action range of a locked shot.</summary>
+        private (float From, float To) ActionRange()
+        {
+            (float start, float end) = Window();
+            if (_intent.action is { Length: 2 }) return (Mathf.Max(start, _intent.action[0]), Mathf.Min(end, _intent.action[1]));
+            return (Mathf.Max(start, _intent.moment - 0.6f), Mathf.Min(end, _intent.moment + 0.4f));
+        }
+
+        /// <summary>The average of both fighters' anchor points over the action range: the middle of where the fight plays.</summary>
+        private Vector3 ActionCentre(float anchorHeight)
+        {
+            (float from, float to) = ActionRange();
+            Vector3 sum = Vector3.zero;
+            int count = 0;
+            for (float t = from; t <= to + 0.001f; t += 0.1f)
+                foreach (ActorTrack? track in new[] { _subject, _partner })
+                {
+                    if (track == null || !track.Sample(t, out Vector3 feet, out _)) continue;
+                    sum += feet + Vector3.up * Mathf.Min(anchorHeight, Height(track) * 0.9f);
+                    count++;
+                }
+            return count > 0 ? sum / count : Feet(_subject, _intent.moment) + Vector3.up * anchorHeight;
         }
 
         /// <summary>The size the camera distance aims for: the middle of the intent's own range, or of a named size once relaxed.</summary>
@@ -320,6 +353,10 @@ namespace cameraTools.Replay.Shots
                 case "track":
                     keys.Add(Key(start, new JObject { ["actor"] = _intent.subject, ["offset"] = Point(camera - feet) }));
                     break;
+                case "locked":
+                    // Camera and aim both fixed: the frame holds while the action plays through it.
+                    keys.Add(new CameraKey { t = (float)Math.Round(start, 3), position = Point(camera), lookAt = Point(look), fov = (float)Math.Round(fov, 2), ease = "linear" });
+                    break;
                 default:
                     keys.Add(Key(start, Point(camera)));
                     break;
@@ -327,13 +364,14 @@ namespace cameraTools.Replay.Shots
             ShotFile shot = new()
             {
                 replay = _replay, name = _intent.name + suffix, start = (float)Math.Round(start, 3), end = (float)Math.Round(end, 3), camera = keys,
-                lookSmoothing = _intent.lookSmoothing ?? (_intent.move switch { "orbit" => 0f, "track" => 0.25f, "static" => 0.15f, _ => 0.2f }),
+                lookSmoothing = _intent.lookSmoothing ?? (_intent.move switch { "orbit" => 0f, "locked" => 0f, "track" => 0.25f, "static" => 0.15f, _ => 0.2f }),
                 keepInFrame = _partner != null ? new List<string> { _intent.subject, _intent.partner! } : new List<string> { _intent.subject },
                 hide = _intent.hide, speed = _intent.speed, shakeOnEvents = _intent.shakeOnEvents,
                 framing = new FramingSpec
                 {
                     subject = _intent.subject, partner = _intent.partner, size = size == SizeName(_intent.size) ? (_intent.size ?? "full") : size, place = _intent.place,
-                    minVisible = _intent.minVisible, maxForeground = _intent.maxForeground, moment = _intent.moment
+                    minVisible = _intent.minVisible, maxForeground = _intent.maxForeground, moment = _intent.moment,
+                    action = _intent.move == "locked" || _intent.action != null ? new[] { (float)Math.Round(ActionRange().From, 3), (float)Math.Round(ActionRange().To, 3) } : null
                 },
                 note = _intent.note
             };
@@ -350,20 +388,29 @@ namespace cameraTools.Replay.Shots
             SideA = Feet(_subject, _intent.moment), SideB = _partner != null ? Feet(_partner, _intent.moment) : Feet(_subject, _intent.moment) + Vector3.forward
         };
 
-        private Candidate? Evaluate(float arc, float height, float fov, float scale, int side, string size, Dictionary<string, float> weights)
+        /// <summary>
+        /// Evaluates one placement. With only, a placement outside those angle bins is skipped before it is measured (the
+        /// fill search for missing bins).
+        /// </summary>
+        private Candidate? Evaluate(float arc, float height, float fov, float scale, int side, string size, Dictionary<string, float> weights, ICollection<string>? only = null)
         {
-            _evaluations++;
             (Vector3 Position, Quaternion Rotation)? placed = Place(arc, height, fov, scale, side, size);
-            if (placed == null) { Count("no placement"); return null; }
+            if (placed == null) { _evaluations++; Count("no placement"); return null; }
+            string bin = Bin(placed.Value.Position);
+            if (only != null && !only.Contains(bin)) return null;
+            _evaluations++;
             ShotFile shot = Build(placed.Value.Position, placed.Value.Rotation, fov, size, "");
             shot.framing!.weights = weights;
             ShotEvaluator evaluator = new(shot, _replayPlayer.Tracks, _heights, _replayPlayer.Events);
             CheckSettings settings = Search(_partner != null ? side : 0);
             ShotAnalysis analysis = ShotCheck.Analyse(evaluator, _aspect, settings, _canopies);
-            Candidate candidate = new() { Arc = arc, Height = height, Fov = fov, Scale = scale, Side = side, Shot = shot, Camera = placed.Value.Position, Search = analysis, Score = analysis.Score };
+            Candidate candidate = new() { Arc = arc, Height = height, Fov = fov, Scale = scale, Side = side, Shot = shot, Camera = placed.Value.Position, Search = analysis, Score = analysis.Score, Bin = bin };
+            BinStats stats = Stats(bin);
+            stats.Evaluated++;
             if (analysis.Rejected != null)
             {
-                Count(Reason(analysis.Rejected));
+                string reason = Count(Reason(analysis.Rejected));
+                stats.Rejects[reason] = stats.Rejects.TryGetValue(reason, out int seen) ? seen + 1 : 1;
                 if (_examples.Count < 40 && _evaluations % 7 == 0) _examples.Add($"side {side} arc {arc:F2} height {height:F0} fov {fov:F0}: {analysis.Rejected}");
             }
             return candidate;
@@ -371,18 +418,35 @@ namespace cameraTools.Replay.Shots
 
         private static string Reason(string rejected) => rejected.Contains(" at ") ? rejected.Substring(0, rejected.LastIndexOf(" at ", StringComparison.Ordinal)) : rejected;
 
-        private void Count(string reason)
+        private string Count(string reason)
         {
             string key = reason.StartsWith("camera within 0.4 m of") && !reason.Contains("solid") ? "camera within 0.4 m of an actor"
                 : reason.StartsWith("camera ") && reason.EndsWith("above the surface") ? "camera under 0.5 m above the surface"
                 : reason.Contains("in-frame") ? "fighter in-frame under 0.8" : reason.StartsWith("visible under") ? "visible under 0.5 for more than 15% of steps" : reason;
             _rejects[key] = _rejects.TryGetValue(key, out int count) ? count + 1 : 1;
+            return key;
+        }
+
+        /// <summary>Per angle bin: placements measured and why they were rejected, for the report's account of missing bins.</summary>
+        private sealed class BinStats
+        {
+            public int Evaluated;
+            public readonly Dictionary<string, int> Rejects = new();
+        }
+
+        private static readonly string[] Bins = { "front", "front_three_quarter", "side", "over_shoulder", "back", "high_wide" };
+        private readonly Dictionary<string, BinStats> _bins = new();
+
+        private BinStats Stats(string bin)
+        {
+            if (!_bins.TryGetValue(bin, out BinStats stats)) _bins[bin] = stats = new BinStats();
+            return stats;
         }
 
         /// <summary>Nelder-Mead over arc, height, field of view and distance, from one start.</summary>
-        private Candidate Refine(Candidate start, string size, Dictionary<string, float> weights, int budget)
+        private Candidate Refine(Candidate start, string size, Dictionary<string, float> weights, int budget, float maxScale = 1.6f)
         {
-            float[] lower = { 0f, _intent.heightRange[0], Fovs(size).Min() - 5f, 0.6f }, upper = { 1f, _intent.heightRange[1], Fovs(size).Max() + 5f, 1.6f };
+            float[] lower = { 0f, _intent.heightRange[0], Fovs(size).Min() - 5f, 0.6f }, upper = { 1f, _intent.heightRange[1], Fovs(size).Max() + 5f, maxScale };
             Candidate best = start;
             float Cost(float[] x)
             {
@@ -442,13 +506,13 @@ namespace cameraTools.Replay.Shots
         // ---------------------------------------------------------------- bins
 
         /// <summary>Where the camera is relative to the subject at the moment: the edit needs distinct angles.</summary>
-        private string Bin(Candidate candidate)
+        private string Bin(Vector3 camera)
         {
             float time = _intent.moment;
             Vector3 feet = Feet(_subject, time);
             _subject.Sample(Mathf.Clamp(time, _subject.Start, _subject.End), out _, out Quaternion rotation);
             Vector3 heading = Framing.Heading(_subject, time, rotation, out _);
-            Vector3 toCamera = candidate.Camera - (feet + Vector3.up * Height(_subject) * 0.6f);
+            Vector3 toCamera = camera - (feet + Vector3.up * Height(_subject) * 0.6f);
             float elevation = Mathf.Asin(Mathf.Clamp(toCamera.normalized.y, -1f, 1f)) * Mathf.Rad2Deg;
             Vector3 flat = new(toCamera.x, 0f, toCamera.z);
             float angle = Vector3.Angle(heading, flat);
@@ -456,7 +520,7 @@ namespace cameraTools.Replay.Shots
             if (angle <= 25f) return "front";
             if (angle <= 70f) return "front_three_quarter";
             if (angle <= 115f) return "side";
-            bool nearSubject = _partner == null || Vector3.Distance(candidate.Camera, feet) < Vector3.Distance(candidate.Camera, Feet(_partner, time));
+            bool nearSubject = _partner == null || Vector3.Distance(camera, feet) < Vector3.Distance(camera, Feet(_partner, time));
             return nearSubject && flat.magnitude < 4.5f ? "over_shoulder" : "back";
         }
 
@@ -501,86 +565,60 @@ namespace cameraTools.Replay.Shots
                 {
                     List<Candidate> pool = new();
                     float[] fovs = _intent.fovs is { Length: > 0 } ? _intent.fovs : Fovs(size);
-                    int[] sides = _partner == null ? new[] { 1 } : _intent.side == 0 ? new[] { 1, -1 } : new[] { _intent.side };
-                    int total = sides.Length * _intent.angles * _intent.heights * fovs.Length, done = 0;
-                    foreach (int side in sides)
+                    int total = Sides().Length * _intent.angles * _intent.heights * fovs.Length, done = 0;
+                    foreach (int side in Sides())
                         for (int a = 0; a < _intent.angles; a++)
                             for (int h = 0; h < _intent.heights; h++)
                                 foreach (float fov in fovs)
                                 {
-                                    float arc = (a + 0.5f) / _intent.angles;
-                                    float height = Mathf.Lerp(_intent.heightRange[0], _intent.heightRange[1], _intent.heights == 1 ? 0.3f : h / (float)(_intent.heights - 1));
-                                    Candidate? candidate = Evaluate(arc, height, fov, 1f, side, size, weights);
+                                    Candidate? candidate = Evaluate((a + 0.5f) / _intent.angles, HeightAt(h, _intent.heights), fov, 1f, side, size, weights);
                                     if (candidate != null && candidate.Search.Rejected == null) pool.Add(candidate);
                                     done++;
                                     if (Yield()) { progress($"solve {_intent.name} search {done}/{total}"); yield return null; }
                                 }
-                    // Refine from the ten best and from the best of each angle bin, so every bin has a refined shot.
-                    foreach (Candidate candidate in pool) candidate.Bin = Bin(candidate);
-                    List<Candidate> bestPerBin = pool.GroupBy(c => c.Bin).Select(g => g.OrderByDescending(c => c.Score).First()).ToList();
-                    List<Candidate> starts = pool.OrderByDescending(c => c.Score).Take(10).Concat(bestPerBin).Distinct().ToList();
-                    List<Candidate> refined = new();
-                    for (int index = 0; index < starts.Count; index++)
-                    {
-                        progress($"solve {_intent.name} refine {index + 1}/{starts.Count}");
-                        yield return null;
-                        refined.Add(Refine(starts[index], size, weights, 32));
-                    }
-                    // Keep the refined shots, the best unrefined ones and the three best of each bin.
-                    finalists = refined.Concat(pool.OrderByDescending(c => c.Score).Take(20))
-                        .Concat(pool.GroupBy(c => c.Bin).SelectMany(g => g.OrderByDescending(c => c.Score).Take(3)))
-                        .GroupBy(c => (Mathf.Round(c.Camera.x * 4f), Mathf.Round(c.Camera.y * 4f), Mathf.Round(c.Camera.z * 4f)))
-                        .Select(g => g.First()).ToList();
-                    foreach (Candidate candidate in finalists)
-                    {
-                        ShotEvaluator evaluator = new(candidate.Shot, _replayPlayer.Tracks, _heights, _replayPlayer.Events);
-                        CheckSettings strict = Search(candidate.Side);
-                        strict.Step = 0.05f; strict.Fps = 60; strict.GridX = 16; strict.GridY = 9;
-                        ShotAnalysis confirm = ShotCheck.Analyse(evaluator, _aspect, strict, _canopies);
-                        if (confirm.Rejected != null) { candidate.Search = confirm; continue; }
-                        candidate.Full = ShotCheck.Analyse(evaluator, _aspect, new CheckSettings(), ShotCheck.Canopies(evaluator));
-                        candidate.Bin = Bin(candidate);
-                        if (Yield()) { progress($"solve {_intent.name} full check"); yield return null; }
-                    }
-                    finalists = finalists.Where(c => c.Full != null).ToList();
+                    finalists = new List<Candidate>();
+                    yield return Finalise(pool, size, weights, 1.6f, finalists, progress);
                 }
-                foreach (Candidate candidate in finalists)
-                {
-                    candidate.Failures = Failures(candidate, relaxed);
-                    candidate.Score = Rescored(candidate, weights);
-                }
-                if (usePixels)
-                {
-                    // The ten best, and the best of each bin, ranked again by pixels; repeated while the order brings up
-                    // candidates without a pixel count.
-                    for (int round = 0; round < 3; round++)
-                    {
-                        List<Candidate> ranked = finalists.Where(c => c.PixelReject == null).OrderByDescending(Order).Take(10)
-                            .Concat(finalists.Where(c => c.PixelReject == null && c.Failures.Count == 0).GroupBy(c => c.Bin).Select(g => g.OrderByDescending(Order).First()))
-                            .Distinct().Where(c => c.PixelScore == null).ToList();
-                        if (ranked.Count == 0) break;
-                        progress($"solve {_intent.name} pixels for {ranked.Count} shots");
-                        List<List<PixelSample>> samples = new();
-                        yield return _player.PixelSamples(ranked.Select(c => new ShotEvaluator(c.Shot, _replayPlayer.Tracks, _heights, _replayPlayer.Events)).ToList(), _aspect, 4f, null, samples);
-                        for (int index = 0; index < ranked.Count; index++)
-                        {
-                            ranked[index].Samples = samples[index];
-                            PixelScore(ranked[index], samples[index], weights);
-                        }
-                    }
-                }
-                foreach (Candidate candidate in finalists)
-                {
-                    if (candidate.Samples != null) PixelScore(candidate, candidate.Samples, weights);
-                    candidate.Score = candidate.PixelScore ?? Rescored(candidate, weights);
-                    candidate.Pass = candidate.Failures.Count == 0 && candidate.Score >= _intent.minScore && (!usePixels || (candidate.PixelScore != null && candidate.PixelReject == null));
-                }
+                yield return Rank(finalists, relaxed, weights, usePixels, progress);
                 stages.Add(new Dictionary<string, object?> { ["relaxed"] = relaxed.ToList(), ["size"] = size, ["finalists"] = finalists.Count, ["passing"] = finalists.Count(c => c.Pass) });
                 if (finalists.Count > 0) kept = finalists;
                 if (finalists.Count(c => c.Pass) >= 1) break;
             }
             // A wider search that met no hard rule leaves the last stage that had candidates.
             finalists = kept;
+            // Fewer than three angle bins with a usable shot: search again only in the missing bins, twice as many arc
+            // positions and farther out (a wider frame keeps fast fighters in it), so the edit has distinct angles.
+            Dictionary<string, object?>? fill = null;
+            List<string> covered = Covered(finalists, usePixels);
+            if (covered.Count < 3)
+            {
+                List<string> missing = Bins.Except(covered).ToList();
+                int before = _evaluations;
+                List<Candidate> pool = new();
+                float[] fovs = _intent.fovs is { Length: > 0 } ? _intent.fovs : Fovs(size);
+                int angles = _intent.angles * 2, done = 0, total = Sides().Length * angles * _intent.heights * fovs.Length * FillScales.Length;
+                foreach (int side in Sides())
+                    for (int a = 0; a < angles; a++)
+                        for (int h = 0; h < _intent.heights; h++)
+                            foreach (float fov in fovs)
+                                foreach (float scale in FillScales)
+                                {
+                                    Candidate? candidate = Evaluate((a + 0.5f) / angles, HeightAt(h, _intent.heights), fov, scale, side, size, weights, missing);
+                                    if (candidate != null && candidate.Search.Rejected == null) pool.Add(candidate);
+                                    done++;
+                                    if (Yield()) { progress($"solve {_intent.name} fill {string.Join(",", missing)} {done}/{total}"); yield return null; }
+                                }
+                List<Candidate> added = new();
+                yield return Finalise(pool, size, weights, FillScales.Max() + 0.3f, added, progress);
+                added = added.Where(c => missing.Contains(c.Bin)).ToList();
+                finalists.AddRange(added);
+                yield return Rank(finalists, relaxed, weights, usePixels, progress);
+                fill = new Dictionary<string, object?>
+                {
+                    ["missing"] = missing, ["scales"] = FillScales, ["angles"] = angles, ["evaluations"] = _evaluations - before, ["passedHardRejects"] = pool.Count,
+                    ["added"] = Covered(finalists, usePixels).Except(covered).ToList()
+                };
+            }
             // The best passing shot in each angle bin, then, for bins without one, the best shot that met the hard rules
             // (marked "pass": false), so the edit has distinct angles to choose from.
             List<Candidate> chosen = finalists.Where(c => c.Pass).GroupBy(c => c.Bin).Select(g => g.OrderByDescending(c => c.Score).First())
@@ -607,17 +645,138 @@ namespace cameraTools.Replay.Shots
             Report = new Dictionary<string, object?>
             {
                 ["intent"] = JObject.FromObject(_intent), ["seconds"] = Math.Round(clock.Elapsed.TotalSeconds, 1), ["evaluations"] = _evaluations, ["rejects"] = _rejects, ["rejectExamples"] = _examples,
-                ["stages"] = stages, ["relaxed"] = relaxed, ["written"] = Written.Select(Path.GetFileName).ToList(),
+                ["stages"] = stages, ["relaxed"] = relaxed, ["written"] = Written.Select(Path.GetFileName).ToList(), ["fill"] = fill,
+                ["bins"] = BinReport(finalists, chosen, usePixels),
                 ["finalists"] = finalists.OrderByDescending(c => c.Score).Select(c => Describe(c, relaxed)).ToList()
             };
             File.WriteAllText(Path.Combine(directory, _intent.name + ".solve.json"), JsonConvert.SerializeObject(Report, Formatting.Indented));
+        }
+
+        /// <summary>Distances for the fill search, as multiples of the distance the intended size needs.</summary>
+        private static readonly float[] FillScales = { 1f, 1.35f, 1.8f };
+
+        private int[] Sides() => _partner == null ? new[] { 1 } : _intent.side == 0 ? new[] { 1, -1 } : new[] { _intent.side };
+
+        private float HeightAt(int index, int count) => Mathf.Lerp(_intent.heightRange[0], _intent.heightRange[1], count == 1 ? 0.3f : index / (float)(count - 1));
+
+        /// <summary>Angle bins with a shot the solver can write: one that met the hard rejects, by rays and, with pixels, by pixels.</summary>
+        private static List<string> Covered(List<Candidate> finalists, bool usePixels) =>
+            finalists.Where(c => c.Pass || c.PixelReject == null || !usePixels).Select(c => c.Bin).Distinct().ToList();
+
+        /// <summary>
+        /// Refines from the ten best and the best of each angle bin, keeps the refined shots, the best unrefined ones and
+        /// the three best of each bin, then confirms each with the hard rejects at full resolution and checks it in full.
+        /// </summary>
+        private IEnumerator Finalise(List<Candidate> pool, string size, Dictionary<string, float> weights, float maxScale, List<Candidate> output, Action<string> progress)
+        {
+            List<Candidate> bestPerBin = pool.GroupBy(c => c.Bin).Select(g => g.OrderByDescending(c => c.Score).First()).ToList();
+            List<Candidate> starts = pool.OrderByDescending(c => c.Score).Take(10).Concat(bestPerBin).Distinct().ToList();
+            List<Candidate> refined = new();
+            for (int index = 0; index < starts.Count; index++)
+            {
+                progress($"solve {_intent.name} refine {index + 1}/{starts.Count}");
+                yield return null;
+                refined.Add(Refine(starts[index], size, weights, 32, maxScale));
+            }
+            List<Candidate> finalists = refined.Concat(pool.OrderByDescending(c => c.Score).Take(20))
+                .Concat(pool.GroupBy(c => c.Bin).SelectMany(g => g.OrderByDescending(c => c.Score).Take(3)))
+                .GroupBy(c => (Mathf.Round(c.Camera.x * 4f), Mathf.Round(c.Camera.y * 4f), Mathf.Round(c.Camera.z * 4f)))
+                .Select(g => g.First()).ToList();
+            foreach (Candidate candidate in finalists)
+            {
+                ShotEvaluator evaluator = new(candidate.Shot, _replayPlayer.Tracks, _heights, _replayPlayer.Events);
+                CheckSettings strict = Search(candidate.Side);
+                strict.Step = 0.05f; strict.Fps = 60; strict.GridX = 16; strict.GridY = 9;
+                ShotAnalysis confirm = ShotCheck.Analyse(evaluator, _aspect, strict, _canopies);
+                if (confirm.Rejected != null)
+                {
+                    candidate.Search = confirm;
+                    string reason = "full-resolution recheck: " + Count(Reason(confirm.Rejected));
+                    Dictionary<string, int> rejects = Stats(candidate.Bin).Rejects;
+                    rejects[reason] = rejects.TryGetValue(reason, out int seen) ? seen + 1 : 1;
+                    continue;
+                }
+                candidate.Full = ShotCheck.Analyse(evaluator, _aspect, new CheckSettings(), ShotCheck.Canopies(evaluator));
+                if (Yield()) { progress($"solve {_intent.name} full check"); yield return null; }
+            }
+            output.AddRange(finalists.Where(c => c.Full != null));
+        }
+
+        /// <summary>
+        /// Scores the finalists with the stage's weights and failures; with pixels, ranks the ten best and the best of each
+        /// angle bin again by pixels, repeated while the order brings up candidates without a pixel count.
+        /// </summary>
+        private IEnumerator Rank(List<Candidate> finalists, List<string> relaxed, Dictionary<string, float> weights, bool usePixels, Action<string> progress)
+        {
+            foreach (Candidate candidate in finalists)
+            {
+                candidate.Failures = Failures(candidate, relaxed);
+                candidate.Score = Rescored(candidate, weights);
+            }
+            if (usePixels)
+                for (int round = 0; round < 3; round++)
+                {
+                    List<Candidate> ranked = finalists.Where(c => c.PixelReject == null).OrderByDescending(Order).Take(10)
+                        .Concat(finalists.Where(c => c.PixelReject == null).GroupBy(c => c.Bin).Select(g => g.OrderByDescending(Order).First()))
+                        .Distinct().Where(c => c.PixelScore == null).ToList();
+                    if (ranked.Count == 0) break;
+                    progress($"solve {_intent.name} pixels for {ranked.Count} shots");
+                    List<List<PixelSample>> samples = new();
+                    yield return _player.PixelSamples(ranked.Select(c => new ShotEvaluator(c.Shot, _replayPlayer.Tracks, _heights, _replayPlayer.Events)).ToList(), _aspect, 4f, null, samples);
+                    for (int index = 0; index < ranked.Count; index++)
+                    {
+                        ranked[index].Samples = samples[index];
+                        PixelScore(ranked[index], samples[index], weights);
+                    }
+                }
+            foreach (Candidate candidate in finalists)
+            {
+                if (candidate.Samples != null) PixelScore(candidate, candidate.Samples, weights);
+                candidate.Score = candidate.PixelScore ?? Rescored(candidate, weights);
+                candidate.Pass = candidate.Failures.Count == 0 && candidate.Score >= _intent.minScore && (!usePixels || (candidate.PixelScore != null && candidate.PixelReject == null));
+            }
+        }
+
+        /// <summary>Per angle bin: placements measured, rejects by reason, finalists, and why no shot was written when none was.</summary>
+        private Dictionary<string, object?> BinReport(List<Candidate> finalists, List<Candidate> chosen, bool usePixels)
+        {
+            Dictionary<string, object?> report = new();
+            foreach (string bin in Bins)
+            {
+                BinStats stats = Stats(bin);
+                List<Candidate> inBin = finalists.Where(c => c.Bin == bin).ToList();
+                Candidate? written = chosen.FirstOrDefault(c => c.Bin == bin);
+                string? why = null;
+                if (written == null)
+                {
+                    List<string> top = stats.Rejects.OrderByDescending(r => r.Value).Take(3).Select(r => $"{r.Key} ({r.Value})").ToList();
+                    why = stats.Evaluated == 0 ? "no camera placement fell in this bin"
+                        : inBin.Count == 0 ? $"all {stats.Evaluated} placements failed the hard rejects: {string.Join("; ", top)}"
+                        : usePixels && inBin.All(c => c.PixelReject != null) ? $"every finalist failed the pixel pass: {inBin.First().PixelReject}"
+                        : "other bins ranked higher and keep was reached";
+                }
+                report[bin] = new Dictionary<string, object?>
+                {
+                    ["evaluated"] = stats.Evaluated, ["rejects"] = stats.Rejects, ["finalists"] = inBin.Count, ["passing"] = inBin.Count(c => c.Pass),
+                    ["written"] = written != null ? $"{_intent.name}_{bin}" : null, ["pass"] = written?.Pass, ["why"] = why
+                };
+            }
+            return report;
         }
 
         /// <summary>Ranking order: candidates without failing issues first, then by score.</summary>
         private static float Order(Candidate candidate) => (candidate.Failures.Count == 0 ? 1f : 0f) + candidate.Score;
 
         private float Rescored(Candidate candidate, Dictionary<string, float> weights) =>
-            Framing.ShotScore((candidate.Full ?? candidate.Search).Steps.Where(s => s.Subject != null).Select(s => Framing.Rescore(s, weights)).ToList());
+            Framing.ShotScore((candidate.Full ?? candidate.Search).Steps.Where(s => s.Subject != null && Scored(s.Time)).Select(s => Framing.Rescore(s, weights)).ToList());
+
+        /// <summary>Steps that count toward the score: all of them, or only the action range of a locked shot.</summary>
+        private bool Scored(float time)
+        {
+            if (_intent.move != "locked" && _intent.action == null) return true;
+            (float from, float to) = ActionRange();
+            return time >= from - 0.001f && time <= to + 0.001f;
+        }
 
         /// <summary>Scores the shot again with each step's visibility taken from the nearest pixel sample.</summary>
         private void PixelScore(Candidate candidate, List<PixelSample> samples, Dictionary<string, float> weights)
@@ -626,6 +785,7 @@ namespace cameraTools.Replay.Shots
             int low = 0, counted = 0;
             foreach (PixelSample sample in samples)
             {
+                if (!Scored(sample.Time)) continue;
                 bool partnerCounts = sample.Time >= _intent.moment - 0.5f;
                 List<PixelActor> fighters = sample.Actors.Where(a => a.Present && (a.Id == _intent.subject || (a.Id == _intent.partner && partnerCounts))).ToList();
                 if (fighters.Count == 0) continue;
@@ -638,7 +798,7 @@ namespace cameraTools.Replay.Shots
                 Count("pixels: visible under 0.5 for more than 15% of samples");
             }
             List<float> scores = new();
-            foreach (FrameMeasure step in candidate.Full.Steps.Where(s => s.Subject != null))
+            foreach (FrameMeasure step in candidate.Full.Steps.Where(s => s.Subject != null && Scored(s.Time)))
             {
                 PixelSample nearest = samples.OrderBy(s => Mathf.Abs(s.Time - step.Time)).First();
                 PixelActor? subject = nearest.Actors.FirstOrDefault(a => a.Id == _intent.subject && a.Present);
@@ -647,7 +807,21 @@ namespace cameraTools.Replay.Shots
                 float visibility = partner != null ? 0.7f * subject.VisibleFraction + 0.3f * partner.VisibleFraction : subject.VisibleFraction;
                 scores.Add(Framing.Rescore(step, weights, new Dictionary<string, float> { ["visibility"] = visibility }));
             }
-            candidate.PixelScore = Framing.ShotScore(scores);
+            // Night separation and clutter lower the rank rather than reject: at night every angle may separate poorly.
+            candidate.PixelIssues = new List<string>();
+            List<PixelSample> action = samples.Where(s => Scored(s.Time)).ToList();
+            float? runStart = null;
+            float longest = 0f;
+            foreach (PixelSample sample in action)
+            {
+                bool dim = ShotPlayer.SmoothedStops(action, sample, _intent.subject) is float stops && Mathf.Abs(stops) <= Framing.LowSeparationStops;
+                if (dim) { runStart ??= sample.Time; longest = Mathf.Max(longest, sample.Time - runStart.Value); }
+                else runStart = null;
+            }
+            if (longest >= Framing.LowSeparationSeconds - 0.001f) candidate.PixelIssues.Add($"low_separation for {longest:F2}s");
+            float clutter = action.Select(s => s.Clutter ?? 0f).DefaultIfEmpty(0f).Max();
+            if (clutter > Framing.MaxClutter) candidate.PixelIssues.Add($"clutter {clutter:P0}");
+            candidate.PixelScore = Framing.ShotScore(scores) * Mathf.Pow(0.85f, candidate.PixelIssues.Count);
         }
 
         /// <summary>Check issues that keep a shot from passing; visibility issues are never relaxed.</summary>
@@ -659,7 +833,7 @@ namespace cameraTools.Replay.Shots
                 string type = (string)issue["type"]!;
                 bool counts = type switch
                 {
-                    "subject_hidden" or "pair_split" or "strike_frame" or "foreground_cover" or "below_ground" or "inside_object" or "inside_foliage" => true,
+                    "subject_hidden" or "pair_split" or "subject_cut" or "pair_spread" or "actor_in_front" or "strike_frame" or "foreground_cover" or "below_ground" or "inside_object" or "inside_foliage" => true,
                     "subject_size" => !relaxed.Contains("size"),
                     "subject_place" => !relaxed.Contains("composition"),
                     _ => false
@@ -675,7 +849,7 @@ namespace cameraTools.Replay.Shots
             return new Dictionary<string, object?>
             {
                 ["bin"] = candidate.Bin, ["score"] = Math.Round(candidate.Score, 3), ["rayScore"] = candidate.Full != null ? Math.Round(candidate.Full.Score, 3) : null,
-                ["pixelScore"] = candidate.PixelScore.HasValue ? Math.Round(candidate.PixelScore.Value, 3) : null, ["pixelReject"] = candidate.PixelReject,
+                ["pixelScore"] = candidate.PixelScore.HasValue ? Math.Round(candidate.PixelScore.Value, 3) : null, ["pixelReject"] = candidate.PixelReject, ["pixelIssues"] = candidate.PixelIssues,
                 ["pass"] = candidate.Pass, ["failures"] = candidate.Failures, ["relaxed"] = relaxed,
                 ["side"] = candidate.Side, ["arc"] = Math.Round(candidate.Arc, 3), ["height"] = Math.Round(candidate.Height, 2), ["fov"] = Math.Round(candidate.Fov, 2), ["scale"] = Math.Round(candidate.Scale, 3),
                 ["camera"] = ReplayEvents.Round(candidate.Camera), ["momentSize"] = moment?.Subject != null ? Math.Round(moment.Subject.Size, 3) : null,

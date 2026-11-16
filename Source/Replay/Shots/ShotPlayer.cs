@@ -366,22 +366,28 @@ namespace cameraTools.Replay.Shots
                     ActorTrack track = ReplayPlayer.Instance.Tracks.Get(actor.Id);
                     string role = framing.Measured.First(m => m.Track == track).Role;
                     string name = framing.Name(track);
-                    bool counts = role != "partner" || framing.Moment is not float moment || sample.Time >= moment - 0.5f;
+                    bool counts = framing.InAction(sample.Time) && (role != "partner" || framing.Moment is not float moment || sample.Time >= moment - 0.5f);
                     if (actor.VisibleFraction < framing.MinVisible && counts) ranges.Mark("subject_hidden", actor.Id, sample.Time, $"{name} ({role}) {actor.VisibleFraction:P0} of its pixels visible", actor.VisibleFraction);
-                    if (role == "partner" && actor.InFrame < 0.8f && counts) ranges.Mark("pair_split", actor.Id, sample.Time, $"{name} {actor.InFrame:P0} of its pixels in frame", actor.InFrame);
+                    if (role == "partner" && actor.InFrame < Framing.PixelInFrameNeeded && counts) ranges.Mark("pair_split", actor.Id, sample.Time, $"{name} {actor.InFrame:P0} of its pixels in frame", actor.InFrame);
+                    if (role == "subject" && actor.InFrame < Framing.PixelInFrameNeeded && counts) ranges.Mark("subject_cut", actor.Id, sample.Time, $"{name} {actor.InFrame:P0} of its pixels in frame", actor.InFrame);
+                    if (role == "subject" && counts && SmoothedStops(samples, sample, actor.Id) is float stops && Mathf.Abs(stops) <= Framing.LowSeparationStops)
+                        ranges.Mark("low_separation", actor.Id, sample.Time, $"{name} is {stops:+0.00;-0.00} stops against what is behind it, needs more than ±{Framing.LowSeparationStops:F2}", Mathf.Abs(stops));
                     float? ray = rays?.Actors.FirstOrDefault(a => a.Id == actor.Id)?.Visible;
                     if (ray.HasValue && Mathf.Abs(ray.Value - actor.VisibleFraction) > 0.2f)
                         differences.Add(new Dictionary<string, object?> { ["t"] = Math.Round(sample.Time, 2), ["actor"] = actor.Id, ["rays"] = Framing.R(ray.Value), ["pixels"] = Framing.R(actor.VisibleFraction) });
                 }
-                if (sample.Foreground > framing.MaxForeground || sample.Actors.Any(a => a.HeadCovered))
+                if ((sample.Foreground > framing.MaxForeground || sample.Actors.Any(a => a.HeadCovered)) && framing.InAction(sample.Time))
                     ranges.Mark("foreground_cover", "", sample.Time, sample.Actors.Any(a => a.HeadCovered) ? $"foreground pixels in a head box ({sample.Foreground:P0} of the frame)" : $"foreground covers {sample.Foreground:P0} of the frame", sample.Foreground, false);
+                if (sample.Clutter is float clutter && clutter > Framing.MaxClutter && framing.InAction(sample.Time))
+                    ranges.Mark("clutter", "", sample.Time, $"things other than the subject cover {clutter:P0} of the frame up to {Framing.ClutterDepth:F0} m past the subject, limit {Framing.MaxClutter:P0}", clutter, false);
                 ranges.Step();
                 series.Add(new Dictionary<string, object?>
                 {
-                    ["t"] = Math.Round(sample.Time, 3), ["foreground"] = Framing.R(sample.Foreground),
+                    ["t"] = Math.Round(sample.Time, 3), ["foreground"] = Framing.R(sample.Foreground), ["clutter"] = sample.Clutter.HasValue ? Framing.R(sample.Clutter.Value) : null,
                     ["actors"] = sample.Actors.ToDictionary(a => a.Id, a => (object?)new Dictionary<string, object?>
                     {
-                        ["present"] = a.Present, ["visiblePixels"] = a.Visible, ["alonePixels"] = a.Alone, ["visible"] = Framing.R(a.VisibleFraction), ["inFrame"] = Framing.R(a.InFrame), ["headCovered"] = a.HeadCovered
+                        ["present"] = a.Present, ["visiblePixels"] = a.Visible, ["alonePixels"] = a.Alone, ["visible"] = Framing.R(a.VisibleFraction), ["inFrame"] = Framing.R(a.InFrame), ["headCovered"] = a.HeadCovered,
+                        ["stops"] = a.Stops.HasValue ? Math.Round(a.Stops.Value, 2) : null
                     })
                 });
             }
@@ -396,6 +402,17 @@ namespace cameraTools.Replay.Shots
             WriteCheck(report, path, evaluator, aspect, analysis, pixels);
             _jobResult = $"pixel check {evaluator.Shot.name}: {ranges.Issues.Count} pixel issues, {analysis.Issues.Count - ranges.Issues.Count} ray issues, score={analysis.Score:F2}, " +
                 $"{differences.Count} samples where rays and pixels differ by more than 0.2, {clock.Elapsed.TotalSeconds:F1}s report={report}";
+        }
+
+        /// <summary>
+        /// An actor's separation in stops averaged over the samples within 0.15 s of one, so one frame of a bright spark or a
+        /// dark gap does not open or close a low-separation range.
+        /// </summary>
+        internal static float? SmoothedStops(List<PixelSample> samples, PixelSample at, string actor)
+        {
+            List<float> near = samples.Where(s => Mathf.Abs(s.Time - at.Time) <= 0.15f + 0.001f)
+                .Select(s => s.Actors.FirstOrDefault(a => a.Id == actor && a.Present)?.Stops).Where(v => v.HasValue).Select(v => v!.Value).ToList();
+            return near.Count > 0 ? near.Average() : null;
         }
 
         /// <summary>
@@ -431,15 +448,18 @@ namespace cameraTools.Replay.Shots
                         if (time < file.start - 0.0001f || time > file.end + 0.0001f) continue;
                         CameraFrame camera = ShotCheck.At(frames[shot], time);
                         FrameMeasure measure = framings[shot].Measure(camera.Time, camera.Position, camera.Rotation, camera.Fov, rays: false);
-                        List<(string, GameObject?, Rect)> actors = new();
-                        foreach ((ActorTrack track, string _) in framings[shot].Measured)
+                        List<(string, GameObject?, Rect, Rect, bool)> actors = new();
+                        float? subjectDepth = null;
+                        foreach ((ActorTrack track, string role) in framings[shot].Measured)
                         {
-                            if (!track.Sample(time, out _, out _)) continue;
-                            Rect head = measure.Actors.FirstOrDefault(a => a.Id == track.Key)?.HeadBox ?? Rect.zero;
-                            actors.Add((track.Key, ReplayPlayer.Instance.FindTarget(track.User, track.Id), head));
+                            if (!track.Sample(time, out Vector3 feet, out _)) continue;
+                            ActorFrame? measured = measure.Actors.FirstOrDefault(a => a.Id == track.Key);
+                            actors.Add((track.Key, ReplayPlayer.Instance.FindTarget(track.User, track.Id), measured?.HeadBox ?? Rect.zero, measured?.Box ?? Rect.zero, measured?.Large != true));
+                            // The subject is first when present; clutter is measured against the depth of its body's middle.
+                            if (role == "subject") subjectDepth = Vector3.Dot(feet + Vector3.up * evaluators[shot].Height(track) * 0.5f - camera.Position, camera.Rotation * Vector3.forward);
                         }
                         string? debug = debugFolder != null ? Path.Combine(debugFolder, $"{file.name}-{time.ToString("F2", CultureInfo.InvariantCulture)}.png") : null;
-                        samples[shot].Add(pass.Measure(time, camera.Position, camera.Rotation, camera.Fov, actors, Framing.ForegroundLimit(measure), debug));
+                        samples[shot].Add(pass.Measure(time, camera.Position, camera.Rotation, camera.Fov, actors, Framing.ForegroundLimit(measure), subjectDepth, true, debug));
                     }
                 }
             }
@@ -624,13 +644,21 @@ namespace cameraTools.Replay.Shots
         {
             string directory = System.IO.Directory.Exists(folder) ? folder : Path.Combine(Directory, folder);
             if (!System.IO.Directory.Exists(directory)) throw new ArgumentException($"No shot folder {folder}");
+            // Shot files only: a solve folder also holds its intent file and the solve, check, strip and measure reports.
+            string[] reports = { ".check.json", ".render.json", ".cues.json", ".solve.json", ".strip.json", ".measure.json" };
             List<string> files = System.IO.Directory.GetFiles(directory, "*.json")
-                .Where(file => !file.EndsWith(".check.json") && !file.EndsWith(".render.json") && !file.EndsWith(".cues.json")).OrderBy(file => file).ToList();
+                .Where(file => !reports.Any(file.EndsWith) && !IsIntentFile(file)).OrderBy(file => file).ToList();
             if (files.Count == 0) throw new ArgumentException($"No shot files in {directory}");
             foreach (string file in files) Evaluator(file);
             foreach (string file in files.Skip(_rendering ? 0 : 1)) _queue.Enqueue((file, options));
             if (!_rendering) Render(files[0], options);
             return $"ACCEPTED: rendering {files.Count} shots; poll ct_shot render status until queue=0 and it reports OK";
+        }
+
+        private static bool IsIntentFile(string path)
+        {
+            try { return Newtonsoft.Json.Linq.JToken.Parse(File.ReadAllText(path)) is Newtonsoft.Json.Linq.JObject root && root["intents"] != null; }
+            catch (JsonException) { return false; }
         }
 
         internal string RenderStatus()
