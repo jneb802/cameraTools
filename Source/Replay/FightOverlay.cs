@@ -285,8 +285,8 @@ namespace cameraTools.Replay
             GameObject holder = new("cameraTools overlay label");
             holder.transform.position = position;
             holder.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
-            TextMeshPro label = holder.AddComponent<TextMeshPro>();
-            if (_font != null) label.font = _font;
+            TextMeshPro label = InactiveText.Add(holder, _font);
+            holder.SetActive(true);
             label.text = text;
             label.fontSize = size * 10f;
             label.alignment = TextAlignmentOptions.Center;

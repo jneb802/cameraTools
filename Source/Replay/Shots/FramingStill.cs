@@ -162,8 +162,8 @@ namespace cameraTools.Replay.Shots
                     GameObject item = new("cameraTools still label") { layer = LabelLayer };
                     created.Add(item);
                     item.transform.position = origin + new Vector3((at.x - 0.5f) * aspect, at.y - 0.5f, 1f);
-                    TextMeshPro label = item.AddComponent<TextMeshPro>();
-                    if (_font != null) label.font = _font;
+                    TextMeshPro label = InactiveText.Add(item, _font);
+                    item.SetActive(true);
                     label.text = text;
                     label.fontSize = 0.3f;
                     label.color = color;
