@@ -72,8 +72,6 @@ namespace cameraTools.Replay
             Builders.Add((prefix, build));
         }
 
-        internal static bool HasBuilder(string name) => FindBuilder(name) != null;
-
         /// <summary>Builds a recorded name with its mod's builder. Null when no builder answers or the builder fails.</summary>
         internal static GameObject? Build(string name, Vector3 position, Quaternion rotation)
         {

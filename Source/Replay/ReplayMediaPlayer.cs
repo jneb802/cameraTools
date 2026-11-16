@@ -127,8 +127,8 @@ namespace cameraTools.Replay
             }
         }
 
-        // A mod that reported its own visual may build it (LineRenderers have no prefab); otherwise the
-        // effect is rebuilt from the prefab of that name.
+        // A mod that reported its own visual may register a builder for its name; otherwise the effect is
+        // rebuilt from the prefab of that name.
         private GameObject? Create(string name, EffectFrame first)
         {
             GameObject? built = ReplayHooks.Build(name, first.Position, first.Rotation);
