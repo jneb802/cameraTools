@@ -99,6 +99,11 @@ namespace cameraTools.Replay.Shots
         internal const float SpeckLimit = 0.33f;
         /// <summary>Subject and partner in-frame ratio needed across the action (calibrated from the user's labels: a body cut by the bottom edge).</summary>
         internal const float InFrameNeeded = 0.95f;
+        /// <summary>
+        /// The same rule in the pixel pass, which counts carried weapons and capes: a sword swinging past the frame edge
+        /// leaves the body inside (mountainFight1 b04_fight_high_wide at 19.70, labelled good, is 89% in frame by pixels).
+        /// </summary>
+        internal const float PixelInFrameNeeded = 0.85f;
         /// <summary>The widest the pair may spread across the frame (calibrated: fighters at opposite edges with an empty middle).</summary>
         internal const float MaxPairSpread = 0.7f;
         /// <summary>The share of the frame one unmeasured actor nearer than the subject may cover (calibrated: a pack wolf crossing in front).</summary>

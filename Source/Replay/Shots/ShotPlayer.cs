@@ -368,8 +368,8 @@ namespace cameraTools.Replay.Shots
                     string name = framing.Name(track);
                     bool counts = framing.InAction(sample.Time) && (role != "partner" || framing.Moment is not float moment || sample.Time >= moment - 0.5f);
                     if (actor.VisibleFraction < framing.MinVisible && counts) ranges.Mark("subject_hidden", actor.Id, sample.Time, $"{name} ({role}) {actor.VisibleFraction:P0} of its pixels visible", actor.VisibleFraction);
-                    if (role == "partner" && actor.InFrame < Framing.InFrameNeeded && counts) ranges.Mark("pair_split", actor.Id, sample.Time, $"{name} {actor.InFrame:P0} of its pixels in frame", actor.InFrame);
-                    if (role == "subject" && actor.InFrame < Framing.InFrameNeeded && counts) ranges.Mark("subject_cut", actor.Id, sample.Time, $"{name} {actor.InFrame:P0} of its pixels in frame", actor.InFrame);
+                    if (role == "partner" && actor.InFrame < Framing.PixelInFrameNeeded && counts) ranges.Mark("pair_split", actor.Id, sample.Time, $"{name} {actor.InFrame:P0} of its pixels in frame", actor.InFrame);
+                    if (role == "subject" && actor.InFrame < Framing.PixelInFrameNeeded && counts) ranges.Mark("subject_cut", actor.Id, sample.Time, $"{name} {actor.InFrame:P0} of its pixels in frame", actor.InFrame);
                     if (role == "subject" && counts && SmoothedStops(samples, sample, actor.Id) is float stops && Mathf.Abs(stops) <= Framing.LowSeparationStops)
                         ranges.Mark("low_separation", actor.Id, sample.Time, $"{name} is {stops:+0.00;-0.00} stops against what is behind it, needs more than ±{Framing.LowSeparationStops:F2}", Mathf.Abs(stops));
                     float? ray = rays?.Actors.FirstOrDefault(a => a.Id == actor.Id)?.Visible;
@@ -644,13 +644,21 @@ namespace cameraTools.Replay.Shots
         {
             string directory = System.IO.Directory.Exists(folder) ? folder : Path.Combine(Directory, folder);
             if (!System.IO.Directory.Exists(directory)) throw new ArgumentException($"No shot folder {folder}");
+            // Shot files only: a solve folder also holds its intent file and the solve, check, strip and measure reports.
+            string[] reports = { ".check.json", ".render.json", ".cues.json", ".solve.json", ".strip.json", ".measure.json" };
             List<string> files = System.IO.Directory.GetFiles(directory, "*.json")
-                .Where(file => !file.EndsWith(".check.json") && !file.EndsWith(".render.json") && !file.EndsWith(".cues.json")).OrderBy(file => file).ToList();
+                .Where(file => !reports.Any(file.EndsWith) && !IsIntentFile(file)).OrderBy(file => file).ToList();
             if (files.Count == 0) throw new ArgumentException($"No shot files in {directory}");
             foreach (string file in files) Evaluator(file);
             foreach (string file in files.Skip(_rendering ? 0 : 1)) _queue.Enqueue((file, options));
             if (!_rendering) Render(files[0], options);
             return $"ACCEPTED: rendering {files.Count} shots; poll ct_shot render status until queue=0 and it reports OK";
+        }
+
+        private static bool IsIntentFile(string path)
+        {
+            try { return Newtonsoft.Json.Linq.JToken.Parse(File.ReadAllText(path)) is Newtonsoft.Json.Linq.JObject root && root["intents"] != null; }
+            catch (JsonException) { return false; }
         }
 
         internal string RenderStatus()
