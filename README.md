@@ -273,7 +273,8 @@ A shot file is a camera move timed in replay seconds. While it plays it owns the
 |---|---|
 | `start`, `end` | replay seconds the shot covers |
 | `speed` | `{t, speed}` keys in replay seconds, 0.05 to 4, blended smoothly between keys. Each replay second plays for `1 / speed` output seconds |
-| `camera` | keys at replay times. `position` is a world point `[x, y, z]` or `{actor, offset, frame}`: an offset from the actor's feet, in world axes or, with `"frame": "actor"`, turned with the actor's facing. `lookAt` is a world point or `{actor, height, offset}` where `height` is a fraction of the body height (default 0.6); with `"between": "<user:id>"` it is the midpoint of the two actors, each at `height` of its own body (an actor that died holds its last place), so a two-shot stays on both fighters. `fov` in degrees (default 65), `roll` in degrees, `ease` (`linear`, `ease`, `in`, `out`) from this key to the next. Positions and aim follow a smooth curve through the keys; actor-relative keys follow the actor through the whole shot |
+| `camera` | keys at replay times; a key with `"freeze": s` sits `s` output seconds into the freeze at its `t`. `position` is a world point `[x, y, z]` or `{actor, offset, frame}`: an offset from the actor's feet, in world axes or, with `"frame": "actor"`, turned with the actor's facing. `lookAt` is a world point or `{actor, height, offset}` where `height` is a fraction of the body height (default 0.6); with `"between": "<user:id>"` it is the midpoint of the two actors, each at `height` of its own body (an actor that died holds its last place), so a two-shot stays on both fighters. `fov` in degrees (default 65), `roll` in degrees, `ease` (`linear`, `ease`, `in`, `out`) from this key to the next. Positions and aim follow a smooth curve through the keys; actor-relative keys follow the actor through the whole shot |
+| `freezes` | `{t, seconds}`: the fight stops at replay time `t` for `seconds` of output while the camera keeps moving (a frozen-moment orbit). See [Freezes](#freezes) |
 | `lookSmoothing` | seconds the aim takes to catch up with its target, so aim on a fast actor does not jitter; 0 aims exactly |
 | `shake`, `shakeOnEvents` | rotation shake in degrees, at fixed times or on every `death`, `hit`, `damage` or `attack` event (optionally of one `actor`, `minTaken` for hits). The same every run |
 | `keepInFrame` | actors the check requires on screen |
@@ -281,11 +282,34 @@ A shot file is a camera move timed in replay seconds. While it plays it owns the
 | `dof` | drives the game's depth of field: `focus` is `lookAt` or a distance in meters |
 | `framing` | what the shot is meant to show; the check measures against it (see [Framing](#framing)) |
 
+### Freezes
+
+A freeze stops the recorded fight at one replay time while the camera keeps moving, like bullet time in The Matrix:
+
+```json
+"freezes": [{"t": 64.18, "seconds": 2.5}],
+"camera": [
+  {"t": 63.95, "position": [-293.4, 46.0, -8940.0], "lookAt": {"actor": "1276435241:411080", "height": 0.55}},
+  {"t": 64.18, "position": [-295.0, 46.2, -8943.6], "lookAt": {"actor": "1276435241:411080", "height": 0.55}},
+  {"t": 64.18, "freeze": 1.25, "position": [-293.0, 46.6, -8947.4], "lookAt": {"actor": "1276435241:411080", "height": 0.55}},
+  {"t": 64.18, "freeze": 2.5, "position": [-289.0, 46.8, -8947.0], "lookAt": {"actor": "1276435241:411080", "height": 0.55}},
+  {"t": 64.6, "position": [-288.2, 46.8, -8946.0], "lookAt": {"actor": "1276435241:411080", "height": 0.4}}
+]
+```
+
+- During a freeze the game's time scale is 0: characters, particles, cloth, water and recorded effects all stop, and the replay's recorded sounds and music pause. Replay time stays at `t` for `seconds` of output, then the shot carries on from `t` at its speed keys.
+- Camera keys are placed on a camera clock: replay time plus every second frozen before it, plus a key's own `freeze`. The camera curve runs through keys inside a freeze on output time and through the rest of the shot on replay time, so one smooth move can enter, cross and leave a freeze. A key at `t` without `freeze` is the freeze's first frame.
+- Actor-relative positions and look targets stay where the actor is at `t`. Shake is evaluated at replay time, so it holds still during a freeze.
+- `t` must be inside the shot and before its end; a shot may have several freezes at different times. Ramping the speed down before a freeze (for example 1 → 0.3 → 0.05 over a few tenths of a second) makes the stop read as slow motion settling rather than a pause.
+- The output length is the speed integral plus every freeze's seconds; `outputSeconds` in `ct_shot status` includes them.
+- The check measures the camera every 0.25 s of output inside a freeze; the pixel pass measures replay times only, so it sees a freeze at its first frame. `ct_shot preview` and `--strip` add stills at the start, middle and end of each freeze, named `<shot>-<time>f<seconds>.png`; ask for one with `<time>@<seconds>`.
+- The render's frame log gives each frame's `frozen` seconds (0 outside freezes) and `speed` 0 while frozen.
+
 Commands:
 
 - `ct_shot play <file> [from]` plays the shot, from its start or from a replay time inside it (ACCEPTED; poll `ct_shot status` until `mode=hold`); `ct_shot stop` returns the clock to the replay controls.
 - `ct_shot check <file> [aspect] [--pixels [rate]] [--pixels-debug]` steps through the shot every 0.05 s of replay time, with the camera a render would have (look smoothing and shake included), without rendering. It reports each time range where the camera is under the terrain or inside an object, the view to the `lookAt` target is blocked (naming the object, or `terrain`), the view passes through or starts inside a tree's branches, a `keepInFrame` actor is off screen or its centre is outside the middle 80% of the frame, or the camera is within 0.5 m of a body, and the framing issues below. An actor that died may leave the frame after its death. The reply starts `OK: issues=N score=S`; the report, with the per-step framing series, is written to `<file>.check.json`. See [Framing](#framing) for `--pixels`.
-- `ct_shot preview <file> [times... | count N] [--overlays]` saves stills through the shot's camera to `shots/.../previews/<shot>-<time>.png`; with `count N` it uses N evenly spaced times plus every death and hit inside the shot. With `--strip N [--size WxH]` it saves N evenly spaced stills plus every death and hit and the framing moment at a fixed size (default 640x360, whatever the screen size), each twice: clean, and `<shot>-<time>-overlay.png` with the framing overlay. `<shot>.strip.json` holds each still's measurements.
+- `ct_shot preview <file> [times... | time@frozen... | count N] [--overlays]` saves stills through the shot's camera to `shots/.../previews/<shot>-<time>.png`; with `count N` it uses N evenly spaced times plus every death and hit inside the shot. With `--strip N [--size WxH]` it saves N evenly spaced stills plus every death and hit and the framing moment at a fixed size (default 640x360, whatever the screen size), each twice: clean, and `<shot>-<time>-overlay.png` with the framing overlay. `<shot>.strip.json` holds each still's measurements.
 - `ct_shot solve <intent file> [--no-pixels] [--keep N]` searches for camera positions; see [Solve](#solve).
 - `ct_shot measure <render folder or .render.json> [aspect]` measures a finished render again from its frame log with the check's code, writes `<shot>.measure.json` beside it, and compares the subject's size and position with the shot's newest check report.
 - `ct_shot new <name>`, `ct_shot key [time]` and `ct_shot save [name]` build a shot by hand: each key stores the free camera at the current replay time.
@@ -378,7 +402,7 @@ The overlay on `--strip` stills draws the thirds lines, a shaded 10% margin, eac
 - Frames are the final game image without the HUD, the Camera Tools window, the console, the cursor or the guides.
 - `--fps N` (default 60), `--size WxH` (changes the game resolution for the render), `--supersample N` (renders N times larger), `--video` (encodes `<shot>.mp4` with ffmpeg and then deletes the frames unless `--keep-frames`), `--no-audio`, `--overlays` (keeps the guides), `--fps-cap N` (test option: caps the game frame rate while rendering).
 - Audio: the game's mixed output is captured frame by frame with Unity's offline audio capture into `<shot>.wav`. `<shot>.cues.json` lists every recorded sound that starts in the shot in output seconds, with its position relative to the camera, for an edit to rebuild.
-- `<shot>.render.json` holds the shot, settings, frame count and, for every frame, the replay time, output time, speed, camera position, rotation (quaternion `[x, y, z, w]`), look target, roll, field of view and `framing` (size, centre and in-frame ratio of the subject, partner and `keepInFrame` actors), so a finished render can be measured again (`ct_shot measure`) and an edit can check its cuts.
+- `<shot>.render.json` holds the shot, settings, frame count and, for every frame, the replay time, output time, seconds into a freeze (`frozen`), speed, camera position, rotation (quaternion `[x, y, z, w]`), look target, roll, field of view and `framing` (size, centre and in-frame ratio of the subject, partner and `keepInFrame` actors), so a finished render can be measured again (`ct_shot measure`) and an edit can check its cuts.
 - `ct_shot render-all <folder> [options]` queues every shot file in a folder; `ct_shot render status` reports `PENDING: ... queue=N` until all are done; `ct_shot render cancel` stops after the current frame.
 
 ## Build

@@ -9,6 +9,8 @@ namespace cameraTools.Replay.Shots
     internal struct CameraFrame
     {
         public float Time;
+        /// <summary>Output seconds into a freeze at <see cref="Time"/>; 0 outside freezes.</summary>
+        public float Frozen;
         public Vector3 Position;
         public Quaternion Rotation;
         public Vector3 Look;
@@ -127,20 +129,21 @@ namespace cameraTools.Replay.Shots
                     smooth = Vector3.Lerp(smooth.Value, target, 1f - Mathf.Exp(-step / shot.lookSmoothing));
                 }
             }
-            float time = shot.start;
+            ShotTime at = evaluator.First();
             while (true)
             {
-                ShotPose pose = evaluator.Evaluate(Mathf.Min(time, shot.end));
+                float time = at.Replay;
+                ShotPose pose = evaluator.Evaluate(at.IsFrozen ? at : new ShotTime(Mathf.Min(time, shot.end)));
                 Vector3 look = pose.LookAt;
                 if (smooth.HasValue && shot.lookSmoothing > 0f) look = Vector3.Lerp(smooth.Value, look, 1f - Mathf.Exp(-step / shot.lookSmoothing));
                 smooth = look;
                 frames.Add(new CameraFrame
                 {
-                    Time = Mathf.Min(time, shot.end), Position = pose.Position, Look = look, Target = pose.LookAt, Fov = pose.Fov, Roll = pose.Roll,
-                    Rotation = ShotEvaluator.Rotation(pose.Position, look, pose.Roll, evaluator.Shake(time))
+                    Time = Mathf.Min(time, shot.end), Frozen = at.IsFrozen ? at.Frozen : 0f, Position = pose.Position, Look = look, Target = pose.LookAt,
+                    Fov = pose.Fov, Roll = pose.Roll, Rotation = ShotEvaluator.Rotation(pose.Position, look, pose.Roll, evaluator.Shake(time))
                 });
-                if (time >= shot.end - 0.5f * step * evaluator.SpeedAt(time)) break;
-                time += step * evaluator.SpeedAt(time);
+                if (!at.IsFrozen && time >= shot.end - 0.5f * step * evaluator.SpeedAt(time)) break;
+                at = evaluator.Next(at, step);
             }
             return frames;
         }
@@ -157,14 +160,20 @@ namespace cameraTools.Replay.Shots
             return Mathf.Abs(frames[lo].Time - time) <= Mathf.Abs(frames[hi].Time - time) ? frames[lo] : frames[hi];
         }
 
-        /// <summary>The frames to measure: the first output frame in each step of replay time, and the last frame.</summary>
+        /// <summary>Output seconds between measured frames inside a freeze, where replay time does not move.</summary>
+        internal const float FrozenStep = 0.25f;
+
+        /// <summary>
+        /// The frames to measure: the first output frame in each step of replay time, one every <see cref="FrozenStep"/>
+        /// seconds inside a freeze, and the last frame.
+        /// </summary>
         internal static List<CameraFrame> StepFrames(List<CameraFrame> frames, float start, float step)
         {
             List<CameraFrame> chosen = new();
-            int last = -1;
+            (int, int) last = (-1, -1);
             foreach (CameraFrame frame in frames)
             {
-                int bin = Mathf.FloorToInt((frame.Time - start) / step + 0.0001f);
+                (int, int) bin = (Mathf.FloorToInt((frame.Time - start) / step + 0.0001f), Mathf.FloorToInt(frame.Frozen / FrozenStep + 0.0001f));
                 if (bin == last) continue;
                 last = bin;
                 chosen.Add(frame);
