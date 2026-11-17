@@ -19,10 +19,14 @@ namespace cameraTools.Replay
         private float _nextScan;
         private float _lastTime = -1f;
 
-        internal ReplayMediaPlayer(ReplayFile file)
+        private readonly SpawnOnHitPlayer _spawnOnHit;
+        internal int SpawnOnHitCount => _spawnOnHit.Count;
+
+        internal ReplayMediaPlayer(ReplayFile file, ReplayTracks tracks)
         {
             _file = file;
             Active = this;
+            _spawnOnHit = new SpawnOnHitPlayer(file, tracks);
             foreach (GameObject prefab in Resources.FindObjectsOfTypeAll<GameObject>())
                 if (!prefab.scene.IsValid()) _prefabs[prefab.name] = prefab;
             foreach (KeyValuePair<string, GameObject> pair in ReplayMediaRecorder.Prefabs)
@@ -77,6 +81,7 @@ namespace cameraTools.Replay
                 effect.Root.transform.rotation = Quaternion.Slerp(a.Rotation, b.Rotation, t);
                 effect.Visual.Apply(a.Visual, b.Visual, t);
             }
+            _spawnOnHit.Update(time, paused, speed);
             bool discontinuity = time < _lastTime || Mathf.Abs(time - _lastTime) > 0.2f;
             foreach (SoundTrack track in _file.Sounds)
             {
@@ -120,7 +125,7 @@ namespace cameraTools.Replay
                 AudioMan? ambience = AudioMan.instance;
                 foreach (AudioSource source in Object.FindObjectsByType<AudioSource>(FindObjectsSortMode.None))
                 {
-                    if (_sounds.ContainsValue(source) || source == ReplayPlayer.Instance.Music?.Source) continue;
+                    if (_sounds.ContainsValue(source) || _spawnOnHit.Owns(source) || source == ReplayPlayer.Instance.Music?.Source) continue;
                     // The wind, ocean and ambient loops are not recorded; the game plays them for the camera's position.
                     if (ambience != null && (source == ambience.m_windLoopSource || source == ambience.m_oceanAmbientSource || source == ambience.m_ambientLoopSource)) continue;
                     if (!_muted.ContainsKey(source)) _muted[source] = source.mute;
@@ -140,6 +145,7 @@ namespace cameraTools.Replay
         internal void Dispose()
         {
             Active = null;
+            _spawnOnHit.Dispose();
             foreach (var effect in _effects.Values) Object.Destroy(effect.Root);
             foreach (AudioSource source in _sounds.Values) Object.Destroy(source.gameObject);
             foreach (KeyValuePair<AudioSource, bool> pair in _muted) if (pair.Key != null) pair.Key.mute = pair.Value;

@@ -64,7 +64,7 @@ namespace cameraTools.Replay
         public string Media()
         {
             if (_replay == null) return "No replay loaded";
-            List<string> lines = new() { $"effects={_replay.Effects.Count} sounds={_replay.Sounds.Count} deaths={_replay.Deaths.Count}" };
+            List<string> lines = new() { $"effects={_replay.Effects.Count} sounds={_replay.Sounds.Count} deaths={_replay.Deaths.Count} spawnOnHit={_media?.SpawnOnHitCount ?? 0}" };
             foreach (DeathEvent death in _replay.Deaths) lines.Add($"death {death.Time:F3}s {death.Name}");
             foreach (EffectTrack track in _replay.Effects) lines.Add($"effect {track.Start:F3}-{track.End:F3}s {track.Prefab} frames={track.Frames.Count}");
             foreach (SoundTrack track in _replay.Sounds) lines.Add($"sound {track.Start:F3}-{track.End:F3}s {track.Clip} frames={track.Frames.Count}");
@@ -167,7 +167,7 @@ namespace cameraTools.Replay
             _highlights = null;
             Clock = null;
             _ghostManager = new GhostManager(replay.Info);
-            _media = new ReplayMediaPlayer(replay);
+            _media = new ReplayMediaPlayer(replay, Tracks);
             CameraRig = new ReplayCameraRig(replay);
             Music = new ReplayMusic();
             _playbackTime = 0f;
