@@ -31,7 +31,8 @@ namespace cameraTools.Replay.Shots
         private string _shotPath = "";
         private ShotFile? _editing;
         private string _editingPath = "";
-        private float _target;
+        // Where the shot is: the replay time this frame shows and, inside a freeze, the seconds spent in it.
+        private ShotTime _at;
         private Vector3 _smoothLook;
         private bool _hasSmoothLook;
         private float _lastFov = ShotEvaluator.DefaultFov;
@@ -110,15 +111,27 @@ namespace cameraTools.Replay.Shots
         {
             if (_mode == Mode.Play && _evaluator != null)
             {
-                float speed = _evaluator.SpeedAt(_target);
-                _target += realDelta * speed;
-                SetTimeScale(_evaluator.SpeedAt(_target));
-                if (_target >= _evaluator.Shot.end) { _target = _evaluator.Shot.end; Finish(); }
+                _at = _evaluator.Next(_at, realDelta);
+                if (!_at.IsFrozen && _at.Replay >= _evaluator.Shot.end) { _at = new ShotTime(_evaluator.Shot.end); Finish(); }
+                Freeze(_at.IsFrozen);
+                SetTimeScale(_evaluator.SpeedAt(_at.Replay), _at.IsFrozen);
             }
-            return _target;
+            return _at.Replay;
         }
 
-        private static void SetTimeScale(float scale) => Game.m_timeScale = Mathf.Clamp(scale, 0.05f, 4f);
+        private static void SetTimeScale(float scale, bool frozen = false)
+        {
+            Game.m_timeScale = frozen ? 0f : Mathf.Clamp(scale, 0.05f, 4f);
+            // The game copies m_timeScale to Time.timeScale during its own update, a frame late; a freeze has to stop the
+            // very next frame and the frame after it has to move again.
+            if (frozen || Time.timeScale == 0f) Time.timeScale = Game.m_timeScale;
+        }
+
+        /// <summary>Pauses the replay's recorded sounds and music during a freeze; the shot still owns the clock.</summary>
+        private static void Freeze(bool frozen)
+        {
+            if (ReplayPlayer.IsPlaying && ReplayPlayer.Instance.IsPaused != frozen) ReplayPlayer.Instance.SetPaused(frozen);
+        }
 
         private void Begin(ShotEvaluator evaluator, Mode mode, float time)
         {
@@ -130,9 +143,9 @@ namespace cameraTools.Replay.Shots
             cameraTools.Markers.PathPlayer.Stop();
             _evaluator = evaluator;
             _mode = mode;
-            _target = Clamp(time);
+            _at = new ShotTime(Clamp(time), 0f, evaluator.FreezeAt(Clamp(time)) != null);
             _hasSmoothLook = false;
-            player.Seek(_target);
+            player.Seek(_at.Replay);
             player.SetPaused(false);
             player.Clock = Clock;
             BeginFocus();
@@ -170,7 +183,7 @@ namespace cameraTools.Replay.Shots
             string shot = _evaluator != null ? $"shot={_evaluator.Shot.name} file={_shotPath} start={ShotEvaluator.F(_evaluator.Shot.start)} end={ShotEvaluator.F(_evaluator.Shot.end)} " +
                 $"outputSeconds={ShotEvaluator.F(_evaluator.OutputDuration())}" : "shot=none";
             string replay = ReplayPlayer.IsPlaying ? $"replayTime={ReplayPlayer.Instance.PlaybackTime:F3}" : "replayTime=none";
-            string speed = _evaluator != null ? $"speed={_evaluator.SpeedAt(_target):F2}" : "speed=1";
+            string speed = _evaluator == null ? "speed=1" : _at.IsFrozen ? $"speed=0 frozen={_at.Frozen:F2}" : $"speed={_evaluator.SpeedAt(_at.Replay):F2}";
             string job = _job.Length > 0 ? $" job=\"{_job}\"" : "";
             string result = _jobResult.Length > 0 ? $" last=\"{_jobResult}\"" : "";
             string camera = GameCamera.m_instance != null ? $" camera={ShotEvaluator.F(GameCamera.m_instance.transform.position)}" : "";
@@ -228,12 +241,13 @@ namespace cameraTools.Replay.Shots
             if (_mode == Mode.Idle || _evaluator == null) return;
             HideRequested();
             if (!ReplayPlayer.IsPlaying) { _mode = Mode.Idle; _evaluator = null; SetTimeScale(1f); return; }
-            Apply(_target, _mode == Mode.Render ? 1f / Mathf.Max(1, _render?.Fps ?? 60) : Time.unscaledDeltaTime, smooth: _mode != Mode.Hold || _hasSmoothLook);
+            Apply(_at, _mode == Mode.Render ? 1f / Mathf.Max(1, _render?.Fps ?? 60) : Time.unscaledDeltaTime, smooth: _mode != Mode.Hold || _hasSmoothLook);
         }
 
-        private void Apply(float time, float delta, bool smooth)
+        private void Apply(ShotTime at, float delta, bool smooth)
         {
-            ShotPose pose = _evaluator!.Evaluate(time);
+            float time = at.Replay;
+            ShotPose pose = _evaluator!.Evaluate(at);
             Vector3 look = pose.LookAt;
             float smoothing = _evaluator.Shot.lookSmoothing;
             if (smooth && smoothing > 0f && _hasSmoothLook) look = Vector3.Lerp(_smoothLook, look, 1f - Mathf.Exp(-delta / smoothing));
@@ -438,7 +452,7 @@ namespace cameraTools.Replay.Shots
                     float time = times[index];
                     _job = $"pixels {evaluators[0].Shot.name}{(evaluators.Count > 1 ? $" and {evaluators.Count - 1} more" : "")} {index + 1}/{times.Count}";
                     ReplayPlayer.Instance.Seek(time);
-                    _target = time;
+                    _at = new ShotTime(time);
                     _hasSmoothLook = false;
                     yield return WaitForActors(time);
                     yield return null;
@@ -478,26 +492,33 @@ namespace cameraTools.Replay.Shots
             public int Width = 640, Height = 360;
         }
 
-        internal string Preview(string path, List<float> times, PreviewOptions options)
+        internal string Preview(string path, List<ShotTime> times, PreviewOptions options)
         {
             ShotEvaluator evaluator = Evaluator(path);
             if (times.Count == 0)
             {
                 int n = Mathf.Max(1, options.Strip > 0 ? options.Strip : options.Count);
-                for (int index = 0; index < n; index++) times.Add(evaluator.Shot.start + (evaluator.Shot.end - evaluator.Shot.start) * (n == 1 ? 0.5f : index / (float)(n - 1)));
+                for (int index = 0; index < n; index++) times.Add(new ShotTime(evaluator.Shot.start + (evaluator.Shot.end - evaluator.Shot.start) * (n == 1 ? 0.5f : index / (float)(n - 1))));
                 foreach (ReplayEvent tag in ReplayPlayer.Instance.Events.Events)
-                    if (tag.Time > evaluator.Shot.start && tag.Time < evaluator.Shot.end && (tag.Type == ReplayEventType.Death || tag.Type == ReplayEventType.Hit)) times.Add(tag.Time);
-                if (evaluator.Shot.framing?.moment is float moment) times.Add(moment);
+                    if (tag.Time > evaluator.Shot.start && tag.Time < evaluator.Shot.end && (tag.Type == ReplayEventType.Death || tag.Type == ReplayEventType.Hit)) times.Add(new ShotTime(tag.Time));
+                if (evaluator.Shot.framing?.moment is float moment) times.Add(new ShotTime(moment));
+                // The start, middle and end of every freeze: the camera moves there while replay time stands still.
+                foreach (FreezeKey freeze in evaluator.Shot.freezes)
+                    foreach (float part in new[] { 0f, 0.5f, 1f }) times.Add(new ShotTime(freeze.t, freeze.seconds * part, true));
             }
-            foreach (float time in times)
-                if (time < evaluator.Shot.start - 0.001f || time > evaluator.Shot.end + 0.001f) throw new ArgumentException($"Preview time {time} is outside the shot ({evaluator.Shot.start}-{evaluator.Shot.end})");
+            foreach (ShotTime time in times)
+            {
+                if (time.Replay < evaluator.Shot.start - 0.001f || time.Replay > evaluator.Shot.end + 0.001f) throw new ArgumentException($"Preview time {time.Replay} is outside the shot ({evaluator.Shot.start}-{evaluator.Shot.end})");
+                if (time.IsFrozen && time.Frozen > 0f && evaluator.FreezeAt(time.Replay) is not FreezeKey) throw new ArgumentException($"The shot has no freeze at {time.Replay}");
+            }
             _shotPath = path;
-            List<float> ordered = times.Select(t => (float)Math.Round(t, 2)).Distinct().OrderBy(t => t).ToList();
+            List<ShotTime> ordered = times.Select(t => new ShotTime((float)Math.Round(t.Replay, 2), (float)Math.Round(t.Frozen, 2), t.IsFrozen && t.Frozen > 0f))
+                .GroupBy(t => (t.Replay, t.Frozen)).Select(group => group.First()).OrderBy(t => t.Replay).ThenBy(t => t.Frozen).ToList();
             StartCoroutine(PreviewRoutine(evaluator, ordered, options));
             return $"ACCEPTED: saving {ordered.Count} stills{(options.Strip > 0 ? $" at {options.Width}x{options.Height} with framing overlays" : "")}; poll ct_shot status until mode=idle";
         }
 
-        private IEnumerator PreviewRoutine(ShotEvaluator evaluator, List<float> times, PreviewOptions options)
+        private IEnumerator PreviewRoutine(ShotEvaluator evaluator, List<ShotTime> times, PreviewOptions options)
         {
             string directory = Path.Combine(Path.GetDirectoryName(_shotPath)!, "previews");
             System.IO.Directory.CreateDirectory(directory);
@@ -509,20 +530,22 @@ namespace cameraTools.Replay.Shots
             PixelPass? pixels = fixedSize ? new PixelPass(Mathf.RoundToInt(144 * aspect), 144) : null;
             using (new CleanFrame(options.Overlays))
             {
-                Begin(evaluator, Mode.Hold, times[0]);
+                Begin(evaluator, Mode.Hold, times[0].Replay);
                 _cancel = false;
-                foreach (float time in times)
+                foreach (ShotTime at in times)
                 {
                     if (_cancel) break;
+                    float time = at.Replay;
                     _job = $"preview {written.Count + 1}/{times.Count}";
                     ReplayPlayer.Instance.Seek(time);
-                    _target = time;
+                    _at = at;
                     _hasSmoothLook = false;
                     // A seek rebuilds the recorded objects; the game creates them over the next frames.
                     yield return WaitForActors(time);
                     for (int frame = 0; frame < 6; frame++) yield return null;
                     yield return new WaitForEndOfFrame();
-                    string stem = Path.Combine(directory, $"{evaluator.Shot.name}-{time.ToString("F2", CultureInfo.InvariantCulture)}");
+                    string frozen = at.Frozen > 0f ? "f" + at.Frozen.ToString("F2", CultureInfo.InvariantCulture) : "";
+                    string stem = Path.Combine(directory, $"{evaluator.Shot.name}-{time.ToString("F2", CultureInfo.InvariantCulture)}{frozen}");
                     if (!fixedSize)
                     {
                         Texture2D image = ScreenCapture.CaptureScreenshotAsTexture();
@@ -538,12 +561,13 @@ namespace cameraTools.Replay.Shots
                         FrameMeasure measure = framing!.Measure(time, camera.position, camera.rotation, CurrentFov());
                         Dictionary<string, float> brightness = FramingStill.Brightness(clean, measure, pixels!, ReplayPlayer.Instance);
                         FramingStill.Write(stem + ".png", clean);
-                        string header = $"{evaluator.Shot.name}  t={time:F2}  score {measure.Score:F2}  fg {measure.Foreground:F2}{(measure.HeadCovered ? " HEAD COVERED" : "")}";
+                        string header = $"{evaluator.Shot.name}  t={time:F2}{(at.Frozen > 0f ? $" frozen {at.Frozen:F2}s" : "")}  score {measure.Score:F2}  fg {measure.Foreground:F2}{(measure.HeadCovered ? " HEAD COVERED" : "")}";
                         Texture2D overlay = FramingStill.Overlay(target, measure, header, brightness);
                         FramingStill.Write(stem + "-overlay.png", overlay);
                         Destroy(overlay);
                         written.Add(stem + ".png");
                         Dictionary<string, object?> entry = Framing.Json(measure, true);
+                        if (at.Frozen > 0f) entry["frozen"] = Math.Round(at.Frozen, 2);
                         entry["clean"] = Path.GetFileName(stem + ".png");
                         entry["overlay"] = Path.GetFileName(stem + "-overlay.png");
                         entry["camera"] = ReplayEvents.Round(camera.position);
@@ -713,11 +737,11 @@ namespace cameraTools.Replay.Shots
                     _job = $"render {shot.name} warm-up";
                     for (float time = warm; time < shot.start - 0.0001f && !_cancel; time = Mathf.Min(shot.start, time + step))
                     {
-                        _target = Mathf.Min(shot.start, time + step);
+                        _at = new ShotTime(Mathf.Min(shot.start, time + step));
                         yield return null;
                     }
                     // A shot without a speed key at its start begins at that speed.
-                    float replayTime = shot.start;
+                    ShotTime at = evaluator.First();
                     float outputTime = 0f;
                     int total = Mathf.CeilToInt(evaluator.OutputDuration() * options.Fps);
                     bool recordAudio = options.Audio;
@@ -729,10 +753,12 @@ namespace cameraTools.Replay.Shots
                     int index = 0;
                     Framing logFraming = new(evaluator, Screen.width / (float)Mathf.Max(1, Screen.height));
                     // Half a frame of tolerance, so summing 1/fps steps cannot add a frame at the end.
-                    while (replayTime < shot.end - 0.5f * step * evaluator.SpeedAt(replayTime) && !_cancel)
+                    while ((at.IsFrozen || at.Replay < shot.end - 0.5f * step * evaluator.SpeedAt(at.Replay)) && !_cancel)
                     {
-                        _target = replayTime;
-                        SetTimeScale(evaluator.SpeedAt(replayTime));
+                        float replayTime = at.Replay;
+                        _at = at;
+                        Freeze(at.IsFrozen);
+                        SetTimeScale(evaluator.SpeedAt(replayTime), at.IsFrozen);
                         _job = $"render {shot.name} frame={index + 1}/{total}";
                         yield return new WaitForEndOfFrame();
                         Texture2D image = ScreenCapture.CaptureScreenshotAsTexture(Mathf.Clamp(options.Supersample, 1, 4));
@@ -757,13 +783,14 @@ namespace cameraTools.Replay.Shots
                         frameLog.Add(new Dictionary<string, object>
                         {
                             ["frame"] = index, ["replayTime"] = Math.Round(replayTime, 4), ["outputTime"] = Math.Round(outputTime, 4),
-                            ["speed"] = Math.Round(evaluator.SpeedAt(replayTime), 3), ["camera"] = ReplayEvents.Round(position), ["fov"] = Math.Round(_lastFov, 2),
+                            ["frozen"] = at.IsFrozen ? Math.Round(at.Frozen, 4) : 0d,
+                            ["speed"] = at.IsFrozen ? 0d : Math.Round(evaluator.SpeedAt(replayTime), 3), ["camera"] = ReplayEvents.Round(position), ["fov"] = Math.Round(_lastFov, 2),
                             ["rotation"] = Quat(rotation), ["lookAt"] = ReplayEvents.Round(_lastLook), ["roll"] = Math.Round(_lastRoll, 2),
                             ["framing"] = Framing.Json(logFraming.Measure(replayTime, position, rotation, _lastFov, rays: false), false)
                         });
                         index++;
                         outputTime += step;
-                        replayTime += step * evaluator.SpeedAt(replayTime);
+                        at = evaluator.Next(at, step);
                     }
                     if (recordAudio) AudioRenderer.Stop();
                     Task.WaitAll(writes.ToArray());

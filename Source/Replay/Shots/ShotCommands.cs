@@ -51,8 +51,8 @@ namespace cameraTools.Replay.Shots
                         }
                         case "preview":
                         {
-                            string path = ShotPlayer.Resolve(CommandText.Arg(args, 2, "ct_shot preview <file> [times...|count N] [--strip N] [--size WxH] [--overlays]"));
-                            List<float> times = new();
+                            string path = ShotPlayer.Resolve(CommandText.Arg(args, 2, "ct_shot preview <file> [times...|time@frozen...|count N] [--strip N] [--size WxH] [--overlays]"));
+                            List<ShotTime> times = new();
                             ShotPlayer.PreviewOptions options = new();
                             for (int index = 3; index < args.Length; index++)
                             {
@@ -60,7 +60,13 @@ namespace cameraTools.Replay.Shots
                                 else if (args[index] == "count") options.Count = (int)CommandText.Number(CommandText.Arg(args, ++index, "count N"), 1, 60, "Count");
                                 else if (args[index] == "--strip") options.Strip = (int)CommandText.Number(CommandText.Arg(args, ++index, "--strip N"), 1, 60, "Strip stills");
                                 else if (args[index] == "--size") (options.Width, options.Height) = Size(CommandText.Arg(args, ++index, "--size WxH"));
-                                else times.Add(CommandText.Number(args[index], 0f, 100000f, "Preview time"));
+                                else if (args[index].Contains('@'))
+                                {
+                                    // <replay time>@<seconds into the freeze at that time>
+                                    string[] parts = args[index].Split('@');
+                                    times.Add(new ShotTime(CommandText.Number(parts[0], 0f, 100000f, "Preview time"), CommandText.Number(parts[1], 0f, 60f, "Seconds into the freeze"), true));
+                                }
+                                else times.Add(new ShotTime(CommandText.Number(args[index], 0f, 100000f, "Preview time")));
                             }
                             if (options.Strip == 0 && args.Args.Contains("--size")) options.Strip = Mathf.Max(1, times.Count == 0 ? options.Count : times.Count);
                             args.Context.AddString(shots.Preview(path, times, options));

@@ -20,6 +20,8 @@ namespace cameraTools.Replay.Shots
         public float start;
         public float end;
         public List<SpeedKey> speed = new();
+        /// <summary>Frozen moments: the fight stops at each freeze's replay time for its seconds while the camera keeps moving.</summary>
+        public List<FreezeKey> freezes = new();
         public List<CameraKey> camera = new();
         /// <summary>Seconds of output time the aim takes to catch up with its target; 0 aims exactly.</summary>
         public float lookSmoothing;
@@ -41,9 +43,19 @@ namespace cameraTools.Replay.Shots
         public float speed = 1f;
     }
 
+    public sealed class FreezeKey
+    {
+        /// <summary>Replay time the fight stops at.</summary>
+        public float t;
+        /// <summary>Output seconds the fight stays stopped.</summary>
+        public float seconds;
+    }
+
     public sealed class CameraKey
     {
         public float t;
+        /// <summary>For a key inside a freeze at <see cref="t"/>: output seconds into the freeze, from 0 to the freeze's seconds.</summary>
+        public float? freeze;
         /// <summary>[x, y, z] world point, or {"actor": "user:id", "offset": [x, y, z], "frame": "world"|"actor"}.</summary>
         public JToken? position;
         /// <summary>
@@ -86,6 +98,18 @@ namespace cameraTools.Replay.Shots
         public float focalSize = 0.4f;
     }
 
+    /// <summary>
+    /// One moment of a shot: a replay time and, inside a freeze at that time, the output seconds spent in it. Outside freezes
+    /// <see cref="Frozen"/> is 0.
+    /// </summary>
+    public readonly struct ShotTime
+    {
+        public readonly float Replay;
+        public readonly float Frozen;
+        public readonly bool IsFrozen;
+        public ShotTime(float replay, float frozen = 0f, bool isFrozen = false) { Replay = replay; Frozen = frozen; IsFrozen = isFrozen; }
+    }
+
     /// <summary>The camera a shot asks for at one replay time.</summary>
     public struct ShotPose
     {
@@ -104,6 +128,9 @@ namespace cameraTools.Replay.Shots
         private readonly ReplayTracks _tracks;
         private readonly Dictionary<(long, uint), float> _heights;
         private readonly List<(float Time, float Strength, float Duration)> _shakes = new();
+        // Each camera key's place on the camera clock (see CameraClock), in key order.
+        private readonly float[] _keyClock;
+        private const float SameTime = 0.00001f;
 
         public ShotEvaluator(ShotFile shot, ReplayTracks tracks, Dictionary<(long, uint), float> heights, ReplayEventList events)
         {
@@ -111,8 +138,10 @@ namespace cameraTools.Replay.Shots
             _tracks = tracks;
             _heights = heights;
             Validate();
-            Shot.camera.Sort((a, b) => a.t.CompareTo(b.t));
+            Shot.camera.Sort((a, b) => a.t != b.t ? a.t.CompareTo(b.t) : (a.freeze ?? 0f).CompareTo(b.freeze ?? 0f));
             Shot.speed.Sort((a, b) => a.t.CompareTo(b.t));
+            Shot.freezes.Sort((a, b) => a.t.CompareTo(b.t));
+            _keyClock = Shot.camera.Select(key => CameraClock(key.t, key.freeze ?? 0f)).ToArray();
             foreach (ShakeKey key in shot.shake) _shakes.Add((key.t, key.strength, key.duration));
             foreach (ShakeRule rule in shot.shakeOnEvents)
                 foreach (ReplayEvent tag in events.Events)
@@ -148,6 +177,18 @@ namespace cameraTools.Replay.Shots
             foreach (string actor in Shot.keepInFrame) _tracks.Get(actor);
             foreach (SpeedKey key in Shot.speed)
                 if (key.speed < 0.05f || key.speed > 4f) throw new ArgumentException($"Speed {key.speed} at {key.t} must be from 0.05 to 4");
+            foreach (FreezeKey freeze in Shot.freezes)
+            {
+                if (freeze.t < Shot.start || freeze.t >= Shot.end) throw new ArgumentException($"Freeze at {freeze.t} must be inside the shot, from its start to before its end ({Shot.start}-{Shot.end})");
+                if (freeze.seconds <= 0f || freeze.seconds > 60f) throw new ArgumentException($"Freeze at {freeze.t} must last from 0 to 60 seconds, not {freeze.seconds}");
+                if (Shot.freezes.Count(other => Mathf.Abs(other.t - freeze.t) < 0.001f) > 1) throw new ArgumentException($"Two freezes at {freeze.t}; join them into one");
+            }
+            foreach (CameraKey key in Shot.camera)
+            {
+                if (key.freeze is not float frozen) continue;
+                FreezeKey freeze = FreezeAt(key.t) ?? throw new ArgumentException($"Camera key at {key.t} has \"freeze\" but the shot has no freeze at {key.t}");
+                if (frozen < 0f || frozen > freeze.seconds + SameTime) throw new ArgumentException($"Camera key at {key.t} has freeze {frozen}, outside the freeze's 0-{freeze.seconds} seconds");
+            }
             if (Shot.framing is FramingSpec framing)
             {
                 if (framing.subject != null) _tracks.Get(framing.subject);
@@ -238,32 +279,76 @@ namespace cameraTools.Replay.Shots
             return keys[keys.Count - 1].speed;
         }
 
-        /// <summary>Output seconds the shot lasts: each replay second plays for 1 / speed seconds.</summary>
+        /// <summary>Output seconds the shot lasts: each replay second plays for 1 / speed seconds, and each freeze for its seconds.</summary>
         public float OutputDuration(float step = 0.001f)
         {
             float total = 0f;
             for (float time = Shot.start; time < Shot.end; time += step) total += Mathf.Min(step, Shot.end - time) / SpeedAt(time);
-            return total;
+            return total + FrozenBefore(Shot.end);
         }
 
-        /// <summary>The output time at which a replay time plays.</summary>
+        /// <summary>The output time at which a replay time plays (the first frame of a freeze at that time).</summary>
         public float OutputTime(float replayTime, float step = 0.001f)
         {
             float total = 0f;
             for (float time = Shot.start; time < replayTime; time += step) total += Mathf.Min(step, replayTime - time) / SpeedAt(time);
+            return total + FrozenBefore(replayTime);
+        }
+
+        /// <summary>The freeze at a replay time, if there is one.</summary>
+        public FreezeKey? FreezeAt(float time)
+        {
+            foreach (FreezeKey freeze in Shot.freezes) if (Mathf.Abs(freeze.t - time) < SameTime) return freeze;
+            return null;
+        }
+
+        /// <summary>Output seconds spent in freezes before a replay time.</summary>
+        public float FrozenBefore(float time)
+        {
+            float total = 0f;
+            foreach (FreezeKey freeze in Shot.freezes) if (freeze.t < time - SameTime) total += freeze.seconds;
             return total;
         }
 
-        public ShotPose Evaluate(float time)
+        /// <summary>
+        /// Where a moment sits on the camera clock: replay time plus every second frozen before it. Camera keys are placed on
+        /// this clock, so the camera moves through a freeze on output time and through the rest of the shot on replay time.
+        /// </summary>
+        public float CameraClock(float replay, float frozen) => replay + FrozenBefore(replay) + frozen;
+
+        /// <summary>The shot's first output frame.</summary>
+        public ShotTime First() => new(Shot.start, 0f, FreezeAt(Shot.start) != null);
+
+        /// <summary>
+        /// The next output frame, <paramref name="step"/> output seconds later: on through a freeze's seconds while it lasts,
+        /// otherwise replay time moves by step times the speed and stops on the next freeze's time so the freeze starts exactly
+        /// there.
+        /// </summary>
+        public ShotTime Next(ShotTime at, float step)
         {
+            if (at.IsFrozen && FreezeAt(at.Replay) is FreezeKey freeze && at.Frozen + step <= freeze.seconds - 0.5f * step)
+                return new ShotTime(at.Replay, at.Frozen + step, true);
+            float next = at.Replay + step * SpeedAt(at.Replay);
+            foreach (FreezeKey upcoming in Shot.freezes)
+                if (upcoming.t > at.Replay + SameTime && upcoming.t <= next + SameTime) return new ShotTime(upcoming.t, 0f, true);
+            return new ShotTime(next);
+        }
+
+        /// <summary>The camera at a replay time, at the start of any freeze there.</summary>
+        public ShotPose Evaluate(float time) => Evaluate(new ShotTime(time));
+
+        public ShotPose Evaluate(ShotTime at)
+        {
+            float time = at.Replay;
+            float clock = CameraClock(at.Replay, at.Frozen);
             List<CameraKey> keys = Shot.camera;
             int segment = 0;
-            while (segment < keys.Count - 1 && time >= keys[segment + 1].t) segment++;
+            while (segment < keys.Count - 1 && clock >= _keyClock[segment + 1]) segment++;
             float u = 0f;
-            if (segment < keys.Count - 1 && time > keys[segment].t)
+            if (segment < keys.Count - 1 && clock > _keyClock[segment])
             {
-                float span = keys[segment + 1].t - keys[segment].t;
-                u = span > 0.0001f ? Mathf.Clamp01((time - keys[segment].t) / span) : 1f;
+                float span = _keyClock[segment + 1] - _keyClock[segment];
+                u = span > 0.0001f ? Mathf.Clamp01((clock - _keyClock[segment]) / span) : 1f;
                 u = CreativeZoneCameraController.ApplyEasePublic(u, Ease(keys[segment].ease));
             }
             CameraKey Key(int index) => keys[Mathf.Clamp(index, 0, keys.Count - 1)];
@@ -286,7 +371,7 @@ namespace cameraTools.Replay.Shots
                 LookAt = look,
                 Fov = Interpolate(keys, segment, u, key => key.fov, DefaultFov),
                 Roll = Interpolate(keys, segment, u, key => key.roll, 0f),
-                Speed = SpeedAt(time)
+                Speed = at.IsFrozen ? 0f : SpeedAt(time)
             };
         }
 
