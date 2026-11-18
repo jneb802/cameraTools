@@ -37,6 +37,9 @@ namespace cameraTools.Staging
         private float _pauseUntil;
         private bool _waitingForEnd;
         private float _nextStart;
+        private float _pressStart;
+        private Attack? _attackBefore;
+        private bool _attackStarted;
         private float _actionStart;
         private PlayerController? _controller;
 
@@ -334,19 +337,33 @@ namespace cameraTools.Staging
                         if (!player.InAttack()) Finish("attacks done", null);
                         break;
                     }
-                    float held = Time.time - _nextStart;
-                    bool first = !_waitingForEnd;
-                    _waitingForEnd = true;
-                    if (action.Secondary) { secondary = first; secondaryHold = true; }
-                    else { attack = first; attackHold = true; }
-                    if (first) StageRunner.Instance?.Log(this, $"{(action.Secondary ? "secondary" : "primary")} attack {_index + 1}/{action.Count} pressed");
-                    if (held >= action.Hold)
+                    string kind = action.Secondary ? "secondary" : "primary";
+                    if (!_waitingForEnd)
                     {
-                        attackHold = secondaryHold = false;
+                        // A new press: hold the button until the game starts a new swing. A press made during a swing
+                        // stays queued while the button is held, so a combo chains when the swing's chain window opens.
+                        _waitingForEnd = true;
+                        _attackStarted = false;
+                        _pressStart = Time.time;
+                        _attackBefore = player.m_currentAttack;
+                        if (action.Secondary) secondary = true; else attack = true;
+                        StageRunner.Instance?.Log(this, $"{kind} attack {_index + 1}/{action.Count} pressed");
+                    }
+                    if (!_attackStarted && player.m_currentAttack != null && player.m_currentAttack != _attackBefore)
+                    {
+                        _attackStarted = true;
+                        StageRunner.Instance?.Log(this, $"{kind} attack {_index + 1}/{action.Count} started after {Time.time - _pressStart:F2} s");
+                    }
+                    bool timedOut = !_attackStarted && Time.time - _pressStart > AttackStartTimeout;
+                    if (timedOut) StageRunner.Instance?.Log(this, $"{kind} attack {_index + 1}/{action.Count} did not start in {AttackStartTimeout:F0} s");
+                    if (timedOut || (_attackStarted && Time.time - _pressStart >= action.Hold))
+                    {
                         _waitingForEnd = false;
                         _index++;
                         _nextStart = Time.time + Mathf.Max(action.Gap, Time.fixedDeltaTime);
+                        break;
                     }
+                    if (action.Secondary) secondaryHold = true; else attackHold = true;
                     break;
                 }
                 case StageMode.Block:
@@ -395,7 +412,10 @@ namespace cameraTools.Staging
             {
                 Vector3 last = action.Points[action.Points.Count - 1];
                 Vector3 previous = action.Points.Count > 1 ? action.Points[action.Points.Count - 2] : Position;
-                Finish("arrived", last - previous);
+                Vector3 endLook = action.Toward != null ? action.Toward.Ground() - Position
+                    : action.Facing is float facing ? Compass(facing)
+                    : last - previous;
+                Finish("arrived", Flat(endLook));
                 return;
             }
             _pauseUntil = Time.time + hold;
@@ -408,7 +428,7 @@ namespace cameraTools.Staging
             StageAction? action = Action;
             if (action == null) return;
             StageRunner.Instance?.Log(this, $"{action.Do} {result} after {Time.time - _actionStart:F2} s");
-            if (action.Do == "walk" && action.Then == "release") Release(true, null);
+            if (action.Do == "walk" && action.Then == "release") Release(action.Hunt, action.Target?.Character);
             else Hold(look ?? Character.transform.forward);
             StageRunner.Instance?.ActionFinished(action);
         }

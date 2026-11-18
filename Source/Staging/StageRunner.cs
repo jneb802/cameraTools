@@ -23,7 +23,7 @@ namespace cameraTools.Staging
         private readonly Dictionary<string, StagedActor> _actors = new(StringComparer.OrdinalIgnoreCase);
         private readonly List<StageAction> _pending = new();
         private readonly Dictionary<string, float> _finished = new(StringComparer.OrdinalIgnoreCase);
-        private readonly List<(float T, string Text)> _log = new();
+        private readonly List<(float T, bool InScene, string Text)> _log = new();
         private readonly List<Highlight> _highlights = new();
         private StageScene? _scene;
         private float _start;
@@ -336,9 +336,9 @@ namespace cameraTools.Staging
 
         public void Log(StagedActor? actor, string text, bool highlight = false)
         {
-            float t = _running || _scene != null ? SceneTime : 0f;
+            bool inScene = _running || _scene != null;
             string line = actor != null ? $"{actor.Id} {text}" : text;
-            _log.Add((t, line));
+            _log.Add((inScene ? SceneTime : Time.time, inScene, line));
             if (_log.Count > 400) _log.RemoveAt(0);
             if (_recording.Length > 0 && ReplayRecorder.IsRecording && (highlight || actor != null))
             {
@@ -362,7 +362,7 @@ namespace cameraTools.Staging
         }
 
         public IEnumerable<string> LogLines(int last) =>
-            _log.Skip(Math.Max(0, _log.Count - last)).Select(l => $"t={l.T.ToString("F2", CultureInfo.InvariantCulture)} {l.Text}");
+            _log.Skip(Math.Max(0, _log.Count - last)).Select(l => $"{(l.InScene ? "t" : "game")}={l.T.ToString("F2", CultureInfo.InvariantCulture)} {l.Text}");
 
         public string StatusLine()
         {
