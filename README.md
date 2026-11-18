@@ -438,7 +438,7 @@ ct_stage do player attack count=3 toward=c1                       # a three-swin
 ct_stage do c1 release target=player                              # back to its own AI, hunting the player
 ```
 
-Actions (`ct_stage do <id|player> <action> [key=value ...]`):
+Actions (`ct_stage do <id|player> <action> [key=value ...]`); with `after=<label>` [`delay=s`] the action waits for that label, from a guide trigger or a labelled action:
 
 | Action | Does | Keys |
 |---|---|---|
@@ -451,6 +451,7 @@ Actions (`ct_stage do <id|player> <action> [key=value ...]`):
 | `wake`, `sleep` | a creature's sleep, as at the start of a camp | |
 | `place` | teleport to `at`, facing `toward` or `facing` | `at`, `toward`, `facing` |
 | `equip` | equip an item from the inventory | `item` (prefab name) |
+| `health` | set the actor's health (raising its maximum if needed), for example to bring on a boss phase or set up a one-hit kill | `value` |
 
 Points are `[x, z]` (snapped to the ground) or `[x, y, z]`; `facing` is degrees clockwise from north (+z). Targets (`toward`, `to`, `target`) are an actor id, `player`, a marker label or a point.
 
@@ -478,13 +479,57 @@ A scene file in `BepInEx/config/cameraTools/scenes/<scene>.json` runs a whole fi
 }
 ```
 
-Actors: `id` (`player` is the local player), `prefab` (spawn) or `take` (stage the nearest creature of that name within `radius`), `at`, `facing` or `toward`, `level`, `health`, `state` (`hold`, `sleep`, `free`), `item`. `clear` is `true`/`false` or `{radius, at, drops}`: it removes creatures that are not staged and dropped items.
+Actors: `id` (`player` is the local player), `prefab` (spawn) or `take` (stage the nearest creature of that name within `radius`), `at`, `facing` or `toward`, `level`, `health`, `state` (`hold`, `sleep`, `free`), `item`, `zdo` (ZDO strings kept at these values while staged, checked every physics step: `{"VE_Encounter": ""}` keeps a boss spawned inside a Valheim Endgame room out of the room's run, so clearing the room does not kill it and its run-gated abilities keep working). `clear` is `true`/`false` or `{radius, at, drops}`: it removes creatures that are not staged and dropped items.
 
 Notes:
 
 - Creature mods that add spawns (Star Level System's spawn rate) also copy staged spawns; an unstaged copy fights normally. Stage in a profile without them, or `ct_stage clear <radius>` after spawning.
 - A hit on the player's block delays the player's next swing by about 0.9 s; that is the game's block recoil.
-- `ct_stage stop` ends a scene and saves its recording; `ct_stage clear [radius]` removes staged creatures and frees the player.
+- `ct_stage stop` ends a scene and saves its recording; `ct_stage clear [radius]` removes staged creatures, guides, and frees the player.
+- Points given as `[x, z]` (or `ground`) sit on the floor under them. In a room far above the terrain (Endgame rooms near y 5,000), that is the room's floor at the player's height, not the terrain below.
+
+### Guides for the player
+
+When a person plays the fight, guides show them where to stand, which way to walk and where to stop. They are drawn only on the live game screen: they are lines drawn after the camera renders, not world objects, so a recording never contains them, and nothing is drawn while a replay plays, in a replay session, or while a shot previews or renders. A status line at the top of the screen shows `READY` while a scene waits to record and `REC <name> <seconds>` while it records; it shows only while guides are up or a scene runs. Screen capture (OBS) does see guides and the status line, so `ct_stage guide clear` before filming the live screen.
+
+| Kind | Draws | Keys |
+|---|---|---|
+| `mark` | a ring on the floor with a post, and an arrow when it has a direction: a spot to stand on | `at`, `radius` (0.8), `toward` or `facing` |
+| `ring` | an arc at a distance around an actor or point, with ticks pointing in: where to stop | `around`, `radius` (10), `toward` or `facing` (the middle of the arc), `arc` (degrees, 70; 360 for a full circle) |
+| `path` | a line with arrows: a route to walk | `points` or `path` (a path marker) |
+
+Every guide has an `id`, a `label` (shown above it; `_` for spaces on the command line) and a `state`: `active` (bright and pulsing), `next` (dim, so the player sees what comes after) or `off`. A ring or mark centred on an actor follows it.
+
+A mark or ring can have a `trigger`: `enter` (the player is within `radius` of its centre), `leave` (the player was inside and walks out), or `stop` (inside and standing still for 0.3 s). It fires only while the guide is `active` (a dim `next` guide never fires), once (`ct_stage guide arm <id>` or a new state arms it again), turns green for a moment, and records its label (`on`, or the guide's id) in the stage log and the take's highlights. Actions with `after=<label>` start when it fires, so a creature can attack exactly when the player reaches a mark; a scene's `record.after` starts the recording when it fires, so a take starts on the player's first step.
+
+```text
+ct_stage guide mark start at=11392,-15 toward=ue label=start trigger=leave on=go
+ct_stage guide ring stop around=ue radius=18 toward=player label=stop_here state=next trigger=enter on=stop
+ct_stage do ue attack attacks=VE_Eikthyr_StompLine toward=player after=stop      # waits for the stop ring
+ct_stage guide state start off                                                   # by hand, or from a scene action
+```
+
+In a scene file, `guides` lists them (the same keys, with `kind`), an action `{ "guide": "<id>", "state": "active" }` changes one, and `record.after` names the label that starts the recording:
+
+```json
+{
+  "name": "arrival",
+  "record": { "name": "arrival1", "rate": 60, "after": "go", "tail": 1 },
+  "clear": false,
+  "actors": [ { "id": "ue", "take": "VE_UberEikthyr", "at": [11392, 12], "facing": 180 } ],
+  "guides": [
+    { "id": "start", "kind": "mark", "at": [11392, -15], "toward": "ue", "label": "start", "trigger": "leave", "on": "go" },
+    { "id": "stop", "kind": "ring", "around": "ue", "radius": 18, "toward": "player", "label": "stop here", "state": "next", "trigger": "enter" }
+  ],
+  "actions": [
+    { "guide": "start", "state": "off", "after": "go" },
+    { "guide": "stop", "state": "active", "after": "go" },
+    { "after": "stop", "actor": "ue", "do": "attack", "attacks": "VE_Eikthyr_StompLine", "toward": "player", "label": "stomp" }
+  ]
+}
+```
+
+A scene that records on a label waits for it (up to the 300 s scene limit); `ct_stage stop` ends it early.
 
 ## Build
 

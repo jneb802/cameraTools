@@ -32,12 +32,17 @@ namespace cameraTools.Staging
         private float _recordStart;
         private float _tail = 2f;
         private float? _idleSince;
+        // A recording that starts when a label fires (scene record.after).
+        private string _recordAfter = "";
+        private string _recordName = "";
+        private int? _recordRate;
 
         private void Awake() => Instance = this;
 
         public bool Running => _running;
         public IEnumerable<StagedActor> Actors => _actors.Values;
         public float SceneTime => Time.time - _start;
+        public string? WaitingToRecord => _running && _recordAfter.Length > 0 ? $"{_recordName} records on '{_recordAfter}'" : null;
 
         public static Character? FindActorCharacter(string id)
         {
@@ -73,6 +78,7 @@ namespace cameraTools.Staging
             _finished.Clear();
             _scene = scene;
             _start = Time.time;
+            _recordAfter = "";
 
             int cleared = 0;
             if (scene.Clear)
@@ -81,12 +87,27 @@ namespace cameraTools.Staging
                 cleared = ClearArea(centre, scene.ClearRadius, scene.ClearDrops);
             }
             foreach (StageActorSpec spec in scene.Actors) Create(spec);
+            if (StageGuides.Instance != null)
+            {
+                StageGuides.Instance.Clear();
+                foreach (StageGuide guide in scene.Guides) StageGuides.Instance.Set(guide);
+            }
 
             _pending.AddRange(scene.Actions);
             string name = recordName ?? scene.Record?.Name ?? "";
             float lead = scene.Record?.Lead ?? 1f;
             _tail = scene.Record?.Tail ?? 2f;
-            if (name.Length > 0)
+            string after = scene.Record?.After ?? "";
+            if (name.Length > 0 && after.Length > 0)
+            {
+                // Recorded from the moment the label fires, so the take starts on the player's first move.
+                _recording = "";
+                _recordAfter = after;
+                _recordName = name;
+                _recordRate = rate ?? scene.Record?.Rate;
+                lead = 0f;
+            }
+            else if (name.Length > 0)
             {
                 if (!ReplayRecorder.Instance.StartRecording(name, rate ?? scene.Record?.Rate))
                     throw new InvalidOperationException("The recording did not start (see the BepInEx log)");
@@ -101,19 +122,37 @@ namespace cameraTools.Staging
             _start = Time.time + lead;
             _running = true;
             _idleSince = null;
-            Log(null, $"scene {scene.Name}: {_actors.Count} actors, {_pending.Count} actions, {cleared} creatures cleared{(name.Length > 0 ? $", recording {name}" : "")}");
-            return $"ACCEPTED: scene {scene.Name} running with {_actors.Count} actors and {_pending.Count} actions{(name.Length > 0 ? $", recording {name}" : "")}; poll ct_stage status until state=idle";
+            string recordText = name.Length == 0 ? "" : _recordAfter.Length > 0 ? $", recording {name} on '{_recordAfter}'" : $", recording {name}";
+            Log(null, $"scene {scene.Name}: {_actors.Count} actors, {scene.Guides.Count} guides, {_pending.Count} actions, {cleared} creatures cleared{recordText}");
+            return $"ACCEPTED: scene {scene.Name} running with {_actors.Count} actors, {scene.Guides.Count} guides and {_pending.Count} actions{recordText}; poll ct_stage status until state=idle";
         }
 
         private void Update()
         {
-            if (!_running) return;
+            if (!_running)
+            {
+                // Actions queued by hand with after=<label> wait here for a guide trigger or a labelled action.
+                if (_pending.Count > 0 && Player.m_localPlayer != null) RunDue(SceneTime);
+                return;
+            }
             if (Player.m_localPlayer == null)
             {
                 Stop("the player left the world");
                 return;
             }
             float now = SceneTime;
+            RunDue(now);
+
+            bool busy = _pending.Count > 0 || _recordAfter.Length > 0 || _actors.Values.Any(a => a != null && a.Busy);
+            if (busy) _idleSince = null;
+            else _idleSince ??= now;
+            bool ended = _scene?.End is float end ? now >= end : _idleSince is float idle && now >= idle + _tail;
+            if (ended) Stop("finished");
+            else if (now > MaxSceneSeconds) Stop($"stopped after {MaxSceneSeconds:F0} s");
+        }
+
+        private void RunDue(float now)
+        {
             for (int i = 0; i < _pending.Count; i++)
             {
                 StageAction action = _pending[i];
@@ -124,13 +163,38 @@ namespace cameraTools.Staging
                 _pending.RemoveAt(i--);
                 Apply(action);
             }
+        }
 
-            bool busy = _pending.Count > 0 || _actors.Values.Any(a => a != null && a.Busy);
-            if (busy) _idleSince = null;
-            else _idleSince ??= now;
-            bool ended = _scene?.End is float end ? now >= end : _idleSince is float idle && now >= idle + _tail;
-            if (ended) Stop("finished");
-            else if (now > MaxSceneSeconds) Stop($"stopped after {MaxSceneSeconds:F0} s");
+        /// <summary>Queues an action that waits for its 'after' label, outside a scene too.</summary>
+        public void Queue(StageAction action)
+        {
+            if (action.After.Length == 0) throw new ArgumentException("Only an action with after=<label> can wait");
+            _finished.Remove(action.After);
+            _pending.Add(action);
+        }
+
+        public int PendingCount => _pending.Count;
+
+        /// <summary>
+        /// A guide trigger fired: records the label (actions and a recording waiting for it start), logs it, and writes
+        /// it to the take's highlights.
+        /// </summary>
+        public void Fire(string label, string text)
+        {
+            if (_recordAfter.Length > 0 && string.Equals(label, _recordAfter, StringComparison.OrdinalIgnoreCase) && _running)
+            {
+                if (ReplayRecorder.IsRecording || !ReplayRecorder.Instance.StartRecording(_recordName, _recordRate))
+                    Log(null, $"recording {_recordName} did not start (another recording is running, or see the BepInEx log)");
+                else
+                {
+                    _recording = _recordName;
+                    _recordStart = Time.time;
+                    Log(null, $"recording {_recordName} started");
+                }
+                _recordAfter = "";
+            }
+            Log(null, text, highlight: true);
+            if (label.Length > 0) _finished[label] = SceneTime;
         }
 
         /// <summary>Stops the timeline; a recording the scene started is saved. Actors stay where they are, held.</summary>
@@ -139,6 +203,7 @@ namespace cameraTools.Staging
             if (!_running) return "no scene running";
             _running = false;
             _pending.Clear();
+            _recordAfter = "";
             if (_actors.TryGetValue(PlayerId, out StagedActor player) && player != null && player.Mode != StageMode.Free) player.Release(false, null);
             Log(null, $"scene {reason}");
             if (_recording.Length > 0 && ReplayRecorder.IsRecording)
@@ -153,6 +218,17 @@ namespace cameraTools.Staging
 
         public void Apply(StageAction action)
         {
+            if (action.IsGuide)
+            {
+                try
+                {
+                    Log(null, action.Describe(), highlight: true);
+                    (StageGuides.Instance ?? throw new InvalidOperationException("Guides are not loaded")).SetState(action.Guide, action.GuideState);
+                }
+                catch (Exception error) { Log(null, $"{action.Name} failed: {error.Message}"); }
+                ActionFinished(action);
+                return;
+            }
             try
             {
                 StagedActor actor = Actor(action.Actor);
@@ -178,6 +254,12 @@ namespace cameraTools.Staging
                     case "place":
                         Vector3 at = action.At!.Ground();
                         actor.Place(at, action.Toward != null ? action.Toward.Ground() - at : action.Facing is float facing ? StagedActor.Compass(facing) : null);
+                        ActionFinished(action);
+                        break;
+                    case "health":
+                        float health = action.Value ?? 1f;
+                        if (health > actor.Character.GetMaxHealth()) actor.Character.SetMaxHealth(health);
+                        actor.Character.SetHealth(health);
                         ActionFinished(action);
                         break;
                     case "equip":
@@ -238,6 +320,7 @@ namespace cameraTools.Staging
                 if (spec.Level > 1) character.SetLevel(spec.Level);
                 actor = StagedActor.Attach(character, spec.Id, spawned: true);
             }
+            foreach (KeyValuePair<string, string> pair in spec.Zdo) actor.ZdoStrings[pair.Key] = pair.Value;
             if (_actors.TryGetValue(spec.Id, out StagedActor old) && old != null && old != actor) Remove(old);
             _actors[spec.Id] = actor;
 
