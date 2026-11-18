@@ -202,6 +202,8 @@ Some mods build objects on every client without a ZDO, so the recorder cannot se
 
 In a replay session each recorded structure is built by its mod's builder when the replay reaches its start time, hidden after its end time and destroyed when the replay closes; seeking keeps exactly one copy. The copies keep their colliders, so `ct_shot check`, `ct_shot solve`, `ct_replay scene-export` and `ct_replay map` see their walls and floors. A structure no loaded mod builds, for example because Valheim Endgame is not installed, is left out with one log line, and the rest of the recording plays. Recorded visuals play like recorded effects in every replay; one whose prefab is not loaded is left out with one log line. `ct_replay structures` prints one line: each recorded structure, whether it is shown now, and how many scene roots carry its name, which shows duplicates.
 
+A take whose recording missed a structure (it shows `structures=0` although the fight was in a room) can be given it by hand: `ct_replay structure add <name> <x> <y> <z> [yaw] [--save]` adds the structure for the whole take, and its mod's builder builds it like a recorded one; `--save` writes it into the replay file, so later sessions, solves and renders have it. For example `ct_replay structure add VE_Room_uber_eikthyr_grove 11392 5000 0 --save`; the room's position is its root's position in the live world (`cli_component_state ValheimEndgame.EndgameRoom`).
+
 ### Hiding recorded effects
 
 A recording keeps every effect and sound the game made, including ones a video does not want: the burning flames a fire weapon puts on a creature (`vfx_Burning`), a skill level-up burst, a hit sound. Replays can leave them out by name:

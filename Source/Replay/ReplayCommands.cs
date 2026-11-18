@@ -11,7 +11,7 @@ namespace cameraTools.Replay
 {
     public static class ReplayCommands
     {
-        internal const string ReplayUsage = "ct_replay state|status|media|structures|targets|where <user:id>|map [time|from-to] [sizeMeters] [pixels]|scene-export [margin]|digest [rate]|tag [label]|tags|untag <id>|events [death|attack|damage|hit] [user:id]|target [user:id]|find [user:id]|view [user:id] <aim|attach|front|third|projectile>|detach|recorded [on|off|status]|follow <user:id> <x> <y> <z> [local]|pause|play|seek <seconds>|speed <0.1-4>|music [index]|volume <0-1>|ui [show|hide|toggle|status]|effects [list|hidden|hide <names>|show <names|all>]|exit";
+        internal const string ReplayUsage = "ct_replay state|status|media|structures|targets|where <user:id>|map [time|from-to] [sizeMeters] [pixels]|scene-export [margin]|digest [rate]|tag [label]|tags|untag <id>|events [death|attack|damage|hit] [user:id]|target [user:id]|find [user:id]|view [user:id] <aim|attach|front|third|projectile>|detach|recorded [on|off|status]|follow <user:id> <x> <y> <z> [local]|pause|play|seek <seconds>|speed <0.1-4>|music [index]|volume <0-1>|ui [show|hide|toggle|status]|effects [list|hidden|hide <names>|show <names|all>]|structure add <name> <x> <y> <z> [yaw] [--save]|exit";
         internal const string RecordUsage = "record [name] | record start [name] [--rate 30|60] | record stop | record status";
         internal const string FileUsage = "replay <file> | replay list | replay info <file> | replay events <file> | replay digest <file> [rate] | replay downsample <file> <new name> | replay folder | replay browser <open|close|status> | replay exit";
 
@@ -44,6 +44,41 @@ namespace cameraTools.Replay
                 .Select(g => $"sound {g.Key} x{g.Count()}{(ReplayEffectFilter.IsHidden(g.Key) ? " (hidden)" : "")}");
             List<string> lines = effects.Concat(sounds).ToList();
             return string.Join("\n", lines) + (lines.Count > 0 ? "\n" : "") + $"OK: {file.Effects.Count} effect tracks, {file.Sounds.Count} sound tracks; {ReplayEffectFilter.Describe()}";
+        }
+
+        /// <summary>
+        /// ct_replay structure add: puts a mod structure (an encounter room) into the open replay for its whole length,
+        /// for a take whose recording missed it; its mod's builder builds it like a recorded one. --save writes it into
+        /// the replay file so later sessions, solves and renders have it.
+        /// </summary>
+        private static string AddStructure(ReplayPlayer player, Terminal.ConsoleEventArgs args)
+        {
+            const string usage = "ct_replay structure add <name> <x> <y> <z> [yaw] [--save]";
+            if (CommandText.Arg(args, 2, usage).ToLowerInvariant() != "add") throw new ArgumentException(usage);
+            string name = CommandText.Arg(args, 3, usage);
+            Vector3 position = new(CommandText.Number(CommandText.Arg(args, 4, usage), -100000f, 100000f, "x"),
+                CommandText.Number(CommandText.Arg(args, 5, usage), -10000f, 20000f, "y"),
+                CommandText.Number(CommandText.Arg(args, 6, usage), -100000f, 100000f, "z"));
+            bool save = false;
+            float yaw = 0f;
+            for (int i = 7; i < args.Length; i++)
+            {
+                if (args[i] == "--save") save = true;
+                else yaw = CommandText.Number(args[i], -360f, 360f, "yaw");
+            }
+            ReplayFile file = player.File;
+            if (file.Structures.Any(t => t.Name == name && Vector3.Distance(t.Position, position) < 0.5f))
+                return $"{name} is already in this replay; " + (player.Structures?.Status(player.PlaybackTime) ?? "");
+            file.Structures.Add(new StructureTrack { Name = name, Position = position, Rotation = Quaternion.Euler(0f, yaw, 0f), Start = 0f, End = float.PositiveInfinity });
+            player.Structures?.Update(player.PlaybackTime);
+            string saved = "";
+            if (save)
+            {
+                string path = player.FilePath ?? throw new InvalidOperationException("This replay has no file to save into");
+                ReplayFileIO.Write(path, file);
+                saved = $"; saved into {Path.GetFileName(path)}";
+            }
+            return $"added {name} at {position.x:F1},{position.y:F1},{position.z:F1}{saved}; " + (player.Structures?.Status(player.PlaybackTime) ?? "rebuilt only in a replay session");
         }
 
         public static void Register()
@@ -113,6 +148,9 @@ namespace cameraTools.Replay
                             else if (args[2].ToLowerInvariant() != "status") CameraToolsPanel.Visible = CommandText.Switch(args[2], CameraToolsPanel.Visible);
                             if (args.Length <= 2 || args[2].ToLowerInvariant() != "status") CameraToolsPanel.Tab = CameraToolsPanel.PanelTab.Replay;
                             args.Context.AddString($"OK: panel={CameraToolsPanel.Visible} tab={CameraToolsPanel.Tab.ToString().ToLowerInvariant()}");
+                            return;
+                        case "structure":
+                            args.Context.AddString("OK: " + AddStructure(player, args));
                             return;
                         case "structures":
                             args.Context.AddString("OK: " + (player.Structures?.Status(player.PlaybackTime) ?? $"structures={player.File.Structures.Count} shown=0 (rebuilt only in a replay session)"));
