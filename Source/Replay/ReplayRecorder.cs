@@ -44,6 +44,17 @@ namespace cameraTools.Replay
         private bool _thumbnailPending;
         private readonly HashSet<(long, uint)> _actors = new();
         private ReplayMediaRecorder? _media;
+        private static readonly Dictionary<int, GameObject?> SpawnedAreas = new();
+
+        /// <summary>The prefab when it is an area object (it carries an Aoe), otherwise null; cached per prefab.</summary>
+        private static GameObject? SpawnedArea(int prefabHash)
+        {
+            if (SpawnedAreas.TryGetValue(prefabHash, out GameObject? area)) return area;
+            GameObject prefab = ZNetScene.instance.GetPrefab(prefabHash);
+            area = prefab != null && prefab.GetComponentInChildren<Aoe>(true) != null ? prefab : null;
+            SpawnedAreas[prefabHash] = area;
+            return area;
+        }
         private ReplayEventRecorder? _events;
         private float _nextSample;
         private long _estimatedBytes;
@@ -238,7 +249,14 @@ namespace cameraTools.Replay
                 Ragdoll ragdoll = nview.GetComponent<Ragdoll>();
                 ItemDrop drop = nview.GetComponent<ItemDrop>();
                 if (character == null && projectile == null && ragdoll == null && drop == null)
+                {
+                    // Area objects a projectile spawns on impact (a staff's lightning strike) are short-lived network
+                    // objects made by Instantiate, not by EffectList, so neither the effect hook nor the scene
+                    // recorder sees them. Record them as effects.
+                    if (_media != null && !zdo.Persistent && SpawnedArea(zdo.GetPrefab()) is GameObject area)
+                        _media.Effect(nview.gameObject, area);
                     continue;
+                }
                 if (Player.m_localPlayer != null && Vector3.Distance(nview.transform.position, Player.m_localPlayer.transform.position) > 150f)
                     continue;
 
