@@ -16,22 +16,37 @@ namespace cameraTools.Replay
         private readonly HashSet<AudioSource> _observed = new();
         private readonly HashSet<GameObject> _soundRoots = new();
         private readonly Dictionary<AudioSource, int> _lastSoundSample = new();
+        /// <summary>Visuals mods reported through <see cref="ReplayHooks.Visual"/>, by the name to rebuild them from.</summary>
+        private readonly Dictionary<GameObject, string> _watched = new();
         private int _sample;
         internal ReplayMediaRecorder(ReplayFile file, ReplayEventRecorder events)
         {
             _file = file; _events = events; _start = Time.time; Active = this;
             foreach (ZSFX sound in Object.FindObjectsByType<ZSFX>(FindObjectsSortMode.None))
                 if (Nearby(sound.transform.position)) _soundRoots.Add(sound.gameObject);
+            foreach ((GameObject instance, string name) in ReplayHooks.Visuals()) Watch(instance, name);
         }
         private static bool Nearby(Vector3 position) => Player.m_localPlayer != null && Vector3.Distance(position, Player.m_localPlayer.transform.position) <= 150f;
 
         internal void Effect(GameObject instance, GameObject prefab)
         {
             Prefabs[prefab.name] = prefab;
-            if (!Nearby(instance.transform.position) || _effects.ContainsKey(instance)) return;
             // Networked aftermath is sampled with the entity frames.
             if (instance.GetComponent<Ragdoll>() != null || instance.GetComponent<ItemDrop>() != null) return;
-            EffectTrack track = new() { Prefab = prefab.name, Start = Time.time - _start, End = Time.time - _start };
+            Track(instance, prefab.name);
+        }
+
+        /// <summary>Samples a mod's own visual like an effect, and again each time it is reactivated.</summary>
+        internal void Watch(GameObject instance, string name)
+        {
+            _watched[instance] = name;
+            if (instance.activeInHierarchy) Track(instance, name);
+        }
+
+        private void Track(GameObject instance, string name)
+        {
+            if (!Nearby(instance.transform.position) || _effects.ContainsKey(instance)) return;
+            EffectTrack track = new() { Prefab = name, Start = Time.time - _start, End = Time.time - _start };
             _effects.Add(instance, track); _file.Effects.Add(track);
         }
 
@@ -69,6 +84,13 @@ namespace cameraTools.Replay
         internal void Sample(float time, ref long bytes)
         {
             List<GameObject> removed = new();
+            foreach (KeyValuePair<GameObject, string> pair in _watched)
+            {
+                if (pair.Key == null) removed.Add(pair.Key!);
+                else if (pair.Key.activeInHierarchy && !_effects.ContainsKey(pair.Key)) Track(pair.Key, pair.Value);
+            }
+            foreach (GameObject root in removed) _watched.Remove(root);
+            removed.Clear();
             foreach (KeyValuePair<GameObject, EffectTrack> pair in _effects)
             {
                 if (pair.Key == null || !pair.Key.activeInHierarchy) { removed.Add(pair.Key!); continue; }

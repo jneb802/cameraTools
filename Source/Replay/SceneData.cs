@@ -28,6 +28,22 @@ namespace cameraTools.Replay
         public byte[] Data = System.Array.Empty<byte>();
     }
 
+    /// <summary>
+    /// A large still object a mod built on this client without a ZDO, such as an encounter room, reported
+    /// through <see cref="ReplayHooks.Structure"/>. Saved since version 11.
+    /// </summary>
+    public sealed class StructureTrack
+    {
+        /// <summary>The name its mod's replay builder answers, such as VE_Room_uber_eikthyr_grove.</summary>
+        public string Name = "";
+        public Vector3 Position;
+        public Quaternion Rotation = Quaternion.identity;
+        /// <summary>Seconds into the recording when it appeared; 0 when it was already there.</summary>
+        public float Start;
+        /// <summary>Seconds into the recording when it was removed; infinity when it remained.</summary>
+        public float End = float.PositiveInfinity;
+    }
+
     /// <summary>Base terrain of one 64 m zone before terrain edits, so playback needs no world generator.</summary>
     public sealed class TerrainPatch
     {

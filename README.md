@@ -46,7 +46,7 @@ ct_shot play <file> [from] | stop | status | check <file> [aspect] [--pixels [ra
 ct_shot solve <intent file> [--no-pixels] [--keep N] | measure <render folder or .render.json> [aspect]
 ct_shot render <file> [--fps N] [--size WxH] [--supersample N] [--video] [--keep-frames] [--no-audio] [--fps-cap N] | render status | render cancel | render-all <folder> [options]
 ct_shot new <name> | key [time] | save [name]
-ct_replay state|status|media|targets|where <user:id>|digest [rate]|map [time|from-to] [sizeMeters] [pixels]|scene-export [margin]|tag [label]|tags|untag <id>|events [death|attack|damage|hit] [user:id]|target [user:id]|find [user:id]|view [user:id] <aim|attach|front|third|projectile>|detach|recorded [on|off|status]|follow <user:id> <x> <y> <z> [local]|pause|play|seek <seconds>|speed <0.1-4>|music [index]|volume <0-1>|ui [show|hide|toggle|status]|exit
+ct_replay state|status|media|structures|targets|where <user:id>|digest [rate]|map [time|from-to] [sizeMeters] [pixels]|scene-export [margin]|tag [label]|tags|untag <id>|events [death|attack|damage|hit] [user:id]|target [user:id]|find [user:id]|view [user:id] <aim|attach|front|third|projectile>|detach|recorded [on|off|status]|follow <user:id> <x> <y> <z> [local]|pause|play|seek <seconds>|speed <0.1-4>|music [index]|volume <0-1>|ui [show|hide|toggle|status]|exit
 ```
 
 ### Replies
@@ -168,7 +168,8 @@ A recording holds:
 
 - every character, projectile, ragdoll and dropped item within 150 m: position, every bone, equipment, effects, sounds and deaths, 60 times a second (30 when set);
 - the camera you recorded with;
-- the surroundings: every world object your game had loaded (building pieces, trees, rocks, location objects, terrain edits and their changes during the take), the base terrain of each loaded 64 m zone, and the weather, wind and time of day.
+- the surroundings: every world object your game had loaded (building pieces, trees, rocks, location objects, terrain edits and their changes during the take), the base terrain of each loaded 64 m zone, and the weather, wind and time of day;
+- objects other mods build only on your client and report through the replay contract (see [Objects from other mods](#objects-from-other-mods)): rooms with their position, rotation and when they appear and are removed (file version 11 and later), and visuals sampled like effects.
 
 ### Watching a recording
 
@@ -185,6 +186,21 @@ The replay session is a temporary world that nothing can change or save:
 The browser lists the mods the recording used. Objects, creatures and effects from a mod that is not loaded are left out, and the panel names them. A recording made in another game version still opens; objects whose data changed between versions can look different.
 
 Only what your game had loaded is in a recording; beyond about 150 m to 300 m, depending on your view settings, you see bare terrain. Recordings made before cameraTools saved surroundings play with `replay <name>` inside their own world, laid over the loaded world.
+
+### Objects from other mods
+
+Some mods build objects on every client without a ZDO, so the recorder cannot see them on its own: Valheim Endgame builds its encounter rooms this way, and draws boss visuals (the Uber Eikthyr vortex pulses, the Yagluth gaze glow, the Queen legion shield, nest shields and links, the Elder curse seed, Moder's flames) on each client from shared timing. Such a mod reports them through `cameraTools.Replay.ReplayHooks`, a public static class that uses only Unity and system types, so the mod binds it by reflection and neither mod needs the other installed:
+
+| Member | Use |
+|---|---|
+| `Version` | Contract version (1). A caller checks it before binding. |
+| `Replaying` | True while a replay plays. The mod draws none of its own per-client visuals then; the replay draws the recorded ones. |
+| `InSession` | True in a replay session. The mod runs no encounter logic, builds no rooms of its own and does nothing to the local player. |
+| `Structure(GameObject, name)` | Records a large still object (a room): name, position, rotation, and when it appears and is destroyed or deactivated. Rooms more than 300 m away horizontally are left out. |
+| `Visual(GameObject, name)` | Records a visual like a game effect, sampled every frame: pose, scale, child nodes, particles, lights and trails (not LineRenderers), until it is destroyed or deactivated; reactivating it starts a new track. `name` is the prefab to rebuild it from. |
+| `Builder(prefix, build)` | Registers how to build presentation copies of recorded names that start with `prefix`. The builder gets the name, position and rotation and returns an object with no gameplay scripts, or null for a name it does not know. |
+
+In a replay session each recorded structure is built by its mod's builder when the replay reaches its start time, hidden after its end time and destroyed when the replay closes; seeking keeps exactly one copy. The copies keep their colliders, so `ct_shot check`, `ct_shot solve`, `ct_replay scene-export` and `ct_replay map` see their walls and floors. A structure no loaded mod builds, for example because Valheim Endgame is not installed, is left out with one log line, and the rest of the recording plays. Recorded visuals play like recorded effects in every replay; one whose prefab is not loaded is left out with one log line. `ct_replay structures` prints one line: each recorded structure, whether it is shown now, and how many scene roots carry its name, which shows duplicates.
 
 ### Event tags
 

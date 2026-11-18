@@ -144,6 +144,7 @@ namespace cameraTools.Replay
             SceneIO.Write(w, replay);
             ReplayEventIO.Write(w, replay);
             CombatData.Write(w, replay);
+            SceneIO.WriteStructures(w, replay);
         }
 
         public static ReplayFile Read(string path)
@@ -342,6 +343,7 @@ namespace cameraTools.Replay
             if (version >= 7) SceneIO.Read(r, replay);
             if (version >= 9) ReplayEventIO.Read(r, replay);
             if (version >= 10) CombatData.Read(r, replay);
+            if (version >= 11) SceneIO.ReadStructures(r, replay);
         }
 
         public static string GetReplayDirectory()

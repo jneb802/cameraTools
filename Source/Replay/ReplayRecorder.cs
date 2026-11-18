@@ -41,6 +41,7 @@ namespace cameraTools.Replay
         private float _recordStartTime;
         private readonly List<TriggerEvent> _pendingTriggers = new List<TriggerEvent>();
         private SceneRecorder? _scene;
+        private StructureRecorder? _structures;
         private bool _thumbnailPending;
         private readonly HashSet<(long, uint)> _actors = new();
         private ReplayMediaRecorder? _media;
@@ -116,6 +117,7 @@ namespace cameraTools.Replay
             IsRecording = true;
             _events = new ReplayEventRecorder(_currentReplay);
             _media = new ReplayMediaRecorder(_currentReplay, _events);
+            _structures = new StructureRecorder(_currentReplay);
             cameraToolsPlugin.TemplateLogger.LogInfo($"Recording started: {RecordingName}");
             return true;
         }
@@ -135,6 +137,8 @@ namespace cameraTools.Replay
             _currentReplay.Duration = Time.time - _recordStartTime;
             _currentReplay.TriggerEvents.AddRange(_pendingTriggers);
             _scene?.Finish();
+            _structures?.Finish();
+            _structures = null;
             _currentReplay.Info.Duration = _currentReplay.Duration;
             _currentReplay.Info.Actors = _actors.Count;
 
@@ -145,7 +149,7 @@ namespace cameraTools.Replay
             _scene = null;
             _bones.Clear();
             _actors.Clear();
-            _saveSummary = $"Recording saved: {RecordingName}.valreplay ({completed.Frames.Count} frames, {completed.Duration:F1}s, {completed.Scene.Count} world objects, {completed.Terrain.Count} zones, {completed.Effects.Count} effects, {completed.Sounds.Count} sounds, {completed.Deaths.Count} deaths, {completed.Attacks.Count} attacks, {completed.Damage.Count} damage samples, {completed.Hits.Count} hits, {completed.SampleRate} samples per second)";
+            _saveSummary = $"Recording saved: {RecordingName}.valreplay ({completed.Frames.Count} frames, {completed.Duration:F1}s, {completed.Scene.Count} world objects, {completed.Terrain.Count} zones, {completed.Structures.Count} mod structures, {completed.Effects.Count} effects, {completed.Sounds.Count} sounds, {completed.Deaths.Count} deaths, {completed.Attacks.Count} attacks, {completed.Damage.Count} damage samples, {completed.Hits.Count} hits, {completed.SampleRate} samples per second)";
             // Sizes, sun angles and highlights come from loaded game data, so they are read here on the main thread.
             DigestContext digest = DigestContext.Capture(completed, path);
             // Samples contain copied structs and strings, not live Unity objects.
@@ -352,6 +356,7 @@ namespace cameraTools.Replay
 
             _currentReplay.Frames.Add(frame);
             _media?.Sample(elapsed, ref _estimatedBytes);
+            _structures?.Sample(elapsed);
 
             _scene?.Update(frame.Time, ref _estimatedBytes);
         }

@@ -11,7 +11,7 @@ namespace cameraTools.Replay
 {
     public static class ReplayCommands
     {
-        internal const string ReplayUsage = "ct_replay state|status|media|targets|where <user:id>|map [time|from-to] [sizeMeters] [pixels]|scene-export [margin]|digest [rate]|tag [label]|tags|untag <id>|events [death|attack|damage|hit] [user:id]|target [user:id]|find [user:id]|view [user:id] <aim|attach|front|third|projectile>|detach|recorded [on|off|status]|follow <user:id> <x> <y> <z> [local]|pause|play|seek <seconds>|speed <0.1-4>|music [index]|volume <0-1>|ui [show|hide|toggle|status]|exit";
+        internal const string ReplayUsage = "ct_replay state|status|media|structures|targets|where <user:id>|map [time|from-to] [sizeMeters] [pixels]|scene-export [margin]|digest [rate]|tag [label]|tags|untag <id>|events [death|attack|damage|hit] [user:id]|target [user:id]|find [user:id]|view [user:id] <aim|attach|front|third|projectile>|detach|recorded [on|off|status]|follow <user:id> <x> <y> <z> [local]|pause|play|seek <seconds>|speed <0.1-4>|music [index]|volume <0-1>|ui [show|hide|toggle|status]|exit";
         internal const string RecordUsage = "record [name] | record start [name] [--rate 30|60] | record stop | record status";
         internal const string FileUsage = "replay <file> | replay list | replay info <file> | replay events <file> | replay digest <file> [rate] | replay downsample <file> <new name> | replay folder | replay browser <open|close|status> | replay exit";
 
@@ -77,6 +77,9 @@ namespace cameraTools.Replay
                             else if (args[2].ToLowerInvariant() != "status") CameraToolsPanel.Visible = CommandText.Switch(args[2], CameraToolsPanel.Visible);
                             if (args.Length <= 2 || args[2].ToLowerInvariant() != "status") CameraToolsPanel.Tab = CameraToolsPanel.PanelTab.Replay;
                             args.Context.AddString($"OK: panel={CameraToolsPanel.Visible} tab={CameraToolsPanel.Tab.ToString().ToLowerInvariant()}");
+                            return;
+                        case "structures":
+                            args.Context.AddString("OK: " + (player.Structures?.Status(player.PlaybackTime) ?? $"structures={player.File.Structures.Count} shown=0 (rebuilt only in a replay session)"));
                             return;
                         case "targets": args.Context.AddString("OK: " + player.Targets()); return;
                         case "map": args.Context.AddString("OK: " + Shots.ShotCommands.Map(args, 2)); return;

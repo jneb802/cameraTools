@@ -244,7 +244,8 @@ namespace cameraTools.Replay.Shots
         {
             Vector3 camera = step.Position;
             if (Physics.CheckSphere(camera, 0.4f, Framing.SolidMask, QueryTriggerInteraction.Ignore)) return "camera within 0.4 m of a solid object";
-            if (Physics.Raycast(camera + Vector3.up * 500f, Vector3.down, out RaycastHit ground, 1000f, Framing.SolidMask, QueryTriggerInteraction.Ignore))
+            float start = FightOverlay.ProbeStart(camera.x, camera.z, camera.y - 2f);
+            if (Physics.Raycast(new Vector3(camera.x, start, camera.z), Vector3.down, out RaycastHit ground, FightOverlay.ProbeLength(start), Framing.SolidMask, QueryTriggerInteraction.Ignore))
             {
                 // The highest surface under the camera, including rocks and floors.
                 if (camera.y - ground.point.y < 0.5f) return $"camera {camera.y - ground.point.y:F2} m above the surface";
