@@ -68,6 +68,7 @@ namespace cameraTools
             new Terminal.ConsoleCommand("ct_help", "List every cameraTools command with its arguments", args =>
             {
                 foreach (string line in Reference) args.Context.AddString(line);
+                foreach (string line in Staging.StageCommands.Reference) args.Context.AddString(line);
             });
 
             Command("ct_ui", "Window visibility and tab: ct_ui <show|hide|toggle|status> [camera|replay]", args =>

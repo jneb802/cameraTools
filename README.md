@@ -381,6 +381,71 @@ The overlay on `--strip` stills draws the thirds lines, a shaded 10% margin, eac
 - `<shot>.render.json` holds the shot, settings, frame count and, for every frame, the replay time, output time, speed, camera position, rotation (quaternion `[x, y, z, w]`), look target, roll, field of view and `framing` (size, centre and in-frame ratio of the subject, partner and `keepInFrame` actors), so a finished render can be measured again (`ct_shot measure`) and an edit can check its cuts.
 - `ct_shot render-all <folder> [options]` queues every shot file in a folder; `ct_shot render status` reports `PENDING: ... queue=N` until all are done; `ct_shot render cancel` stops after the current frame.
 
+## Staging
+
+`ct_stage` places creatures and the player, holds them still, walks them along routes, makes them attack on cue and releases them to their own AI, so a fight can be recorded the same way take after take. While a creature is staged its own AI update does not run; the staging steps drive it with the game's path finding and attacks, so it moves and attacks with its normal animations. Only the owner of a creature can stage it (in a local world, every creature).
+
+By hand:
+
+```text
+ct_stage spawn m Morgen 45 ground 47 toward=player state=sleep   # a held, sleeping Morgen at a point
+ct_stage take c1 Charred_Melee                                    # stage the nearest existing Charred
+ct_stage attacks Morgen                                           # the attack names it can be told to use
+ct_stage do m wake                                                # a sleeping Morgen bursts out of the ground
+ct_stage do c1 walk path=charge to=player stop=1.3 pace=run       # along a path marker, then up to the player
+ct_stage do m attack attacks=Morgen_swipe_1,Morgen_bodyslam toward=player
+ct_stage do player attack count=3 toward=c1                       # a three-swing combo at c1
+ct_stage do c1 release target=player                              # back to its own AI, hunting the player
+```
+
+Actions (`ct_stage do <id|player> <action> [key=value ...]`):
+
+| Action | Does | Keys |
+|---|---|---|
+| `hold` | stand still, facing `toward` or `facing` | `toward`, `facing` |
+| `walk` | walk the points in order, then hold (or release) | `points` (`x,z;x,y,z`), `path` (a path marker: its waypoints and their holds), `to` (an actor, marker or point to finish at, followed while it moves), `stop` (metres short of `to`: 1.5 for an actor, else 0), `pace` (`walk`, `run`, `sprint`), `toward` (face at the end), `then` (`hold`, `release`) |
+| `face` | turn to `toward` or `facing` | `toward`, `facing` |
+| `attack` | creature: the named attacks in order, each after the previous ends plus `gap`; player: `count` swings, each pressed `gap` after the previous one starts and held until the game starts it, so a combo chains | `attacks` (names from `ct_stage attacks`), `count`, `gap` (0.3), `hold` (seconds to hold the button, for charged attacks), `secondary`, `toward` |
+| `block` | the player blocks for `hold` seconds | `hold`, `toward` |
+| `release` | back to its own AI | `hunt` (true), `target` (an actor to attack) |
+| `wake`, `sleep` | a creature's sleep, as at the start of a camp | |
+| `place` | teleport to `at`, facing `toward` or `facing` | `at`, `toward`, `facing` |
+| `equip` | equip an item from the inventory | `item` (prefab name) |
+
+Points are `[x, z]` (snapped to the ground) or `[x, y, z]`; `facing` is degrees clockwise from north (+z). Targets (`toward`, `to`, `target`) are an actor id, `player`, a marker label or a point.
+
+A scene file in `BepInEx/config/cameraTools/scenes/<scene>.json` runs a whole fight: `ct_stage run <scene> [record=<name>] [rate=30|60]` clears the area, places every actor, starts the recording (after `record.lead` seconds, so scene time 0 is in the take), starts each action at its time `t` or `delay` seconds after the action labelled `after` finishes, and ends at `end` (or when nothing is left to do, plus `record.tail`). Every action and its result is written to `ct_stage log` and, when recording, to the take's highlights as `stage: <actor> <what>` at the recording time, so beats are exact.
+
+```json
+{
+  "name": "charge",
+  "record": { "name": "charge1", "rate": 60, "lead": 1, "tail": 2 },
+  "clear": { "radius": 40, "at": [45, 40] },
+  "end": 24,
+  "actors": [
+    { "id": "player", "at": [45, null, 29.5], "facing": 0, "item": "SwordBlackmetal" },
+    { "id": "m", "prefab": "Morgen", "at": [45, null, 47], "toward": "player", "state": "sleep" },
+    { "id": "c1", "prefab": "Charred_Melee", "at": [28, null, 62], "toward": "player" }
+  ],
+  "actions": [
+    { "t": 0.5, "actor": "c1", "do": "walk", "path": "charge", "to": "player", "stop": 1.3, "pace": "run", "label": "arrive" },
+    { "after": "arrive", "delay": 0.2, "actor": "c1", "do": "attack", "attacks": "charred_greatsword_swing", "toward": "player" },
+    { "after": "arrive", "delay": 0.1, "actor": "player", "do": "block", "toward": "c1", "hold": 1.2, "label": "block" },
+    { "after": "block", "delay": 0.1, "actor": "player", "do": "attack", "count": 3, "toward": "c1", "label": "combo" },
+    { "after": "combo", "delay": 0.3, "actor": "m", "do": "wake", "label": "wake" },
+    { "after": "wake", "delay": 2.5, "actor": "m", "do": "attack", "attacks": "Morgen_bodyslam", "toward": "player" }
+  ]
+}
+```
+
+Actors: `id` (`player` is the local player), `prefab` (spawn) or `take` (stage the nearest creature of that name within `radius`), `at`, `facing` or `toward`, `level`, `health`, `state` (`hold`, `sleep`, `free`), `item`. `clear` is `true`/`false` or `{radius, at, drops}`: it removes creatures that are not staged and dropped items.
+
+Notes:
+
+- Creature mods that add spawns (Star Level System's spawn rate) also copy staged spawns; an unstaged copy fights normally. Stage in a profile without them, or `ct_stage clear <radius>` after spawning.
+- A hit on the player's block delays the player's next swing by about 0.9 s; that is the game's block recoil.
+- `ct_stage stop` ends a scene and saves its recording; `ct_stage clear [radius]` removes staged creatures and frees the player.
+
 ## Build
 
 ```bash

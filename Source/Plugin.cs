@@ -6,6 +6,7 @@ using BepInEx.Configuration;
 using BepInEx.Logging;
 using cameraTools.Markers;
 using cameraTools.Replay;
+using cameraTools.Staging;
 using HarmonyLib;
 using UnityEngine;
 
@@ -65,11 +66,13 @@ namespace cameraTools
             gameObject.AddComponent<MarkerRenderer>();
             gameObject.AddComponent<AreaRulerManager>();
             gameObject.AddComponent<PathPlayer>();
+            gameObject.AddComponent<StageRunner>();
             CreativeZoneCameraController.RegisterCommands();
             ReplayCommands.Register();
             AgentCommands.Register();
             cameraTools.Replay.Shots.ShotCommands.Register();
             MarkerCommands.Register();
+            StageCommands.Register();
         }
 
         private void OnDestroy()
