@@ -11,9 +11,40 @@ namespace cameraTools.Replay
 {
     public static class ReplayCommands
     {
-        internal const string ReplayUsage = "ct_replay state|status|media|structures|targets|where <user:id>|map [time|from-to] [sizeMeters] [pixels]|scene-export [margin]|digest [rate]|tag [label]|tags|untag <id>|events [death|attack|damage|hit] [user:id]|target [user:id]|find [user:id]|view [user:id] <aim|attach|front|third|projectile>|detach|recorded [on|off|status]|follow <user:id> <x> <y> <z> [local]|pause|play|seek <seconds>|speed <0.1-4>|music [index]|volume <0-1>|ui [show|hide|toggle|status]|exit";
+        internal const string ReplayUsage = "ct_replay state|status|media|structures|targets|where <user:id>|map [time|from-to] [sizeMeters] [pixels]|scene-export [margin]|digest [rate]|tag [label]|tags|untag <id>|events [death|attack|damage|hit] [user:id]|target [user:id]|find [user:id]|view [user:id] <aim|attach|front|third|projectile>|detach|recorded [on|off|status]|follow <user:id> <x> <y> <z> [local]|pause|play|seek <seconds>|speed <0.1-4>|music [index]|volume <0-1>|ui [show|hide|toggle|status]|effects [list|hidden|hide <names>|show <names|all>]|exit";
         internal const string RecordUsage = "record [name] | record start [name] [--rate 30|60] | record stop | record status";
         internal const string FileUsage = "replay <file> | replay list | replay info <file> | replay events <file> | replay digest <file> [rate] | replay downsample <file> <new name> | replay folder | replay browser <open|close|status> | replay exit";
+
+        /// <summary>ct_replay effects hidden|hide|show: works in any game state; list needs an open replay.</summary>
+        private static string Effects(Terminal.ConsoleEventArgs args)
+        {
+            string mode = args[2].ToLowerInvariant();
+            List<string> names = Enumerable.Range(3, Math.Max(0, args.Length - 3)).SelectMany(i => ReplayEffectFilter.Split(args[i])).ToList();
+            switch (mode)
+            {
+                case "hidden": return ReplayEffectFilter.Describe();
+                case "hide":
+                    if (names.Count == 0) throw new ArgumentException("ct_replay effects hide <name,name> (effect prefabs or audio clips; ct_replay effects list shows them)");
+                    ReplayEffectFilter.Hide(names);
+                    return ReplayEffectFilter.Describe();
+                case "show":
+                    if (names.Count == 0) throw new ArgumentException("ct_replay effects show <name,name|all>");
+                    ReplayEffectFilter.Show(names);
+                    return ReplayEffectFilter.Describe();
+                default: throw new ArgumentException("ct_replay effects [list|hidden|hide <names>|show <names|all>]");
+            }
+        }
+
+        /// <summary>The recorded effect prefabs and audio clips with how often each occurs, marking the hidden ones.</summary>
+        private static string EffectList(ReplayFile file)
+        {
+            IEnumerable<string> effects = file.Effects.GroupBy(e => e.Prefab).OrderByDescending(g => g.Count()).ThenBy(g => g.Key)
+                .Select(g => $"effect {g.Key} x{g.Count()}{(ReplayEffectFilter.IsHidden(g.Key) ? " (hidden)" : "")}");
+            IEnumerable<string> sounds = file.Sounds.GroupBy(s => s.Clip).OrderByDescending(g => g.Count()).ThenBy(g => g.Key)
+                .Select(g => $"sound {g.Key} x{g.Count()}{(ReplayEffectFilter.IsHidden(g.Key) ? " (hidden)" : "")}");
+            List<string> lines = effects.Concat(sounds).ToList();
+            return string.Join("\n", lines) + (lines.Count > 0 ? "\n" : "") + $"OK: {file.Effects.Count} effect tracks, {file.Sounds.Count} sound tracks; {ReplayEffectFilter.Describe()}";
+        }
 
         public static void Register()
         {
@@ -24,6 +55,11 @@ namespace cameraTools.Replay
                     string action = args.Length > 1 ? args[1].ToLowerInvariant() : "status";
                     // These answer in any game state, so an agent can wait for a session to finish loading.
                     if (action == "state") { args.Context.AddString("OK: " + State()); return; }
+                    if (action == "effects" && args.Length > 2 && args[2].ToLowerInvariant() != "list")
+                    {
+                        args.Context.AddString("OK: " + Effects(args));
+                        return;
+                    }
                     if (!ReplayPlayer.IsPlaying) throw new InvalidOperationException("Start a replay first. " + State());
                     ReplayPlayer player = ReplayPlayer.Instance;
                     ReplayCameraRig rig = player.CameraRig!;
@@ -107,6 +143,9 @@ namespace cameraTools.Replay
                             return;
                         case "events":
                             foreach (string line in EventLines(player.Events, args)) args.Context.AddString(line);
+                            return;
+                        case "effects":
+                            foreach (string line in EffectList(player.File).Split('\n')) args.Context.AddString(line);
                             return;
                         case "media":
                             foreach (string line in player.Media().Split('\n')) args.Context.AddString(line);
