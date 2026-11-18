@@ -18,7 +18,7 @@ namespace cameraTools.Staging
             "ct_stage status | log [lines] | list - scene state and every actor; what happened and when; the scene files.",
             "ct_stage spawn <id> <prefab> <x> <y|ground> <z> [facing=deg] [toward=<actor|marker|x,z>] [level=n] [health=n] [state=hold|sleep|free] - a held creature at a point.",
             "ct_stage take <id> <creature name> [radius=40] - stage the nearest creature of that name. ct_stage remove <id> - despawn a staged creature or free the player.",
-            "ct_stage do <id|player> <hold|walk|face|attack|release|wake|sleep|place|equip|block> [key=value ...] - one action now. Keys: points=x,z;x,y,z path=<marker> pace=walk|run|sprint then=hold|release",
+            "ct_stage do <id|player> <hold|walk|face|attack|release|wake|sleep|place|equip|block> [key=value ...] - one action now. Keys: points=x,z;x,y,z path=<marker> to=<actor|marker|x,z> stop=m pace=walk|run|sprint then=hold|release",
             "  toward=<actor|marker|x,z> facing=deg attacks=name,name gap=s count=n hold=s secondary=true hunt=true|false target=<actor> at=x,y,z item=<prefab>.",
             "ct_stage attacks <id|prefab> - the attack names a creature can be told to use."
         };
@@ -174,7 +174,7 @@ namespace cameraTools.Staging
                 string value = option.Value;
                 if (key == "points")
                     json[key] = new JArray(value.Split(';').Where(p => p.Length > 0).Select(p => (JToken)Point(p)));
-                else if ((key == "at" || key == "toward" || key == "target") && value.Contains(','))
+                else if ((key == "at" || key == "toward" || key == "target" || key == "to") && value.Contains(','))
                     json[key] = Point(value);
                 else if (key == "attacks")
                     json[key] = value;

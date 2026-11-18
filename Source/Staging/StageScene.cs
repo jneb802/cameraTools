@@ -134,6 +134,10 @@ namespace cameraTools.Staging
         public string Path = "";
         public string Pace = "walk";
         public string Then = "hold";
+        /// <summary>The walk's last point, followed while it moves: an actor, a marker or a point.</summary>
+        public StageTarget? To;
+        /// <summary>How far short of 'to' the walk stops: 1.5 m for an actor, 0 otherwise.</summary>
+        public float? Stop;
 
         public StageTarget? Toward;
         public StageTarget? At;
@@ -162,6 +166,8 @@ namespace cameraTools.Staging
                 Path = StageActorSpec.Text(json, "path") ?? "",
                 Pace = (StageActorSpec.Text(json, "pace") ?? "walk").ToLowerInvariant(),
                 Then = (StageActorSpec.Text(json, "then") ?? "hold").ToLowerInvariant(),
+                To = StageTarget.Parse(json["to"]),
+                Stop = json.Value<float?>("stop"),
                 Toward = StageTarget.Parse(json["toward"]),
                 At = StageTarget.Parse(json["at"]),
                 Facing = json.Value<float?>("facing"),
@@ -189,8 +195,10 @@ namespace cameraTools.Staging
                 action.Attacks = attacks.Type == JTokenType.Array
                     ? attacks.Select(a => a.Value<string>() ?? "").Where(a => a.Length > 0).ToList()
                     : (attacks.Value<string>() ?? "").Split(',').Select(a => a.Trim()).Where(a => a.Length > 0).ToList();
-            if (action.Do == "walk" && action.Points.Count == 0 && action.Path.Length == 0)
-                throw new ArgumentException($"{action.Name}: walk needs 'points' or a path marker in 'path'");
+            if (action.Do == "walk" && action.Points.Count == 0 && action.Path.Length == 0 && action.To == null)
+                throw new ArgumentException($"{action.Name}: walk needs 'points', a path marker in 'path', or 'to'");
+            if (action.Stop is float stop && (stop < 0f || stop > 50f))
+                throw new ArgumentException($"{action.Name}: stop is 0 to 50 m");
             if (action.Do == "walk" && action.Pace != "walk" && action.Pace != "run" && action.Pace != "sprint")
                 throw new ArgumentException($"{action.Name}: pace is walk, run or sprint");
             if (action.Do == "walk" && action.Then != "hold" && action.Then != "release")
@@ -205,7 +213,23 @@ namespace cameraTools.Staging
         }
 
         /// <summary>Fills <see cref="Points"/> from the path marker, with each waypoint's hold.</summary>
+        /// <summary>Index of the point that follows 'to', or -1.</summary>
+        public int ToIndex = -1;
+
         public void ResolvePath()
+        {
+            if (To != null && ToIndex < 0)
+            {
+                ResolveMarkerPath();
+                ToIndex = Points.Count;
+                Points.Add(Vector3.zero);
+                PointHolds.Add(0f);
+                return;
+            }
+            ResolveMarkerPath();
+        }
+
+        private void ResolveMarkerPath()
         {
             if (Path.Length == 0 || Points.Count > 0) return;
             Marker marker = MarkerStore.Find(Path) ?? throw new ArgumentException($"No path marker '{Path}'");

@@ -18,6 +18,7 @@ namespace cameraTools.Staging
     {
         private const float WalkArrive = 0.6f;
         private const float RunArrive = 1.1f;
+        private const float ToArrive = 0.35f;
         private const float AttackStartTimeout = 3f;
         private const float FaceTimeout = 2f;
 
@@ -213,10 +214,10 @@ namespace cameraTools.Staging
                 AI!.StopMoving();
                 return;
             }
-            Vector3 point = action.Points[_index];
+            Vector3 point = PointAt(_index);
             bool run = action.Pace != "walk";
             float distance = Utils.DistanceXZ(point, Position);
-            if (distance < (run ? RunArrive : WalkArrive))
+            if (distance < (_index == action.ToIndex ? ToArrive : run ? RunArrive : WalkArrive))
             {
                 NextLeg();
                 return;
@@ -307,10 +308,10 @@ namespace cameraTools.Staging
                 {
                     StageAction action = Action!;
                     if (Time.time < _pauseUntil) break;
-                    Vector3 point = action.Points[_index];
+                    Vector3 point = PointAt(_index);
                     Vector3 to = point - Position;
                     to.y = 0f;
-                    if (to.magnitude < WalkArrive)
+                    if (to.magnitude < (_index == action.ToIndex ? ToArrive : WalkArrive))
                     {
                         NextLeg();
                         break;
@@ -395,10 +396,22 @@ namespace cameraTools.Staging
 
         // ---- shared ----
 
+        /// <summary>A walk point; the point that follows 'to' stops 'stop' metres short of it, on the side the actor comes from.</summary>
+        private Vector3 PointAt(int index)
+        {
+            StageAction action = Action!;
+            if (index != action.ToIndex || action.To == null) return action.Points[index];
+            Vector3 goal = action.To.Ground();
+            float stop = action.Stop ?? (action.To.Point == null && action.To.Character != null ? 1.5f : 0f);
+            Vector3 from = goal - Position;
+            from.y = 0f;
+            return from.magnitude <= stop ? Position : goal - from.normalized * stop;
+        }
+
         private void StartLeg()
         {
             StageAction action = Action!;
-            float distance = Utils.DistanceXZ(action.Points[_index], Position);
+            float distance = Utils.DistanceXZ(PointAt(_index), Position);
             float speed = action.Pace == "walk" ? 1f : 2.5f;
             _deadline = Time.time + Mathf.Max(6f, distance / speed * 2f + 4f);
         }
@@ -410,9 +423,10 @@ namespace cameraTools.Staging
             _index++;
             if (_index >= action.Points.Count)
             {
-                Vector3 last = action.Points[action.Points.Count - 1];
-                Vector3 previous = action.Points.Count > 1 ? action.Points[action.Points.Count - 2] : Position;
+                Vector3 last = PointAt(action.Points.Count - 1);
+                Vector3 previous = action.Points.Count > 1 ? PointAt(action.Points.Count - 2) : Position;
                 Vector3 endLook = action.Toward != null ? action.Toward.Ground() - Position
+                    : action.To != null ? action.To.Ground() - Position
                     : action.Facing is float facing ? Compass(facing)
                     : last - previous;
                 Finish("arrived", Flat(endLook));
