@@ -228,8 +228,11 @@ namespace cameraTools.Staging
                 Finish("stuck", null);
                 return;
             }
+            // The game's MoveTo counts itself arrived within 1 m running (0.5 m walking), so the last metre to a 'to'
+            // point is a straight step at walking speed, which also keeps a runner from overshooting a 0.35 m target.
+            if (_index == action.ToIndex && distance < 1.5f) AI!.MoveTowards((point - Position).normalized, false);
             // The game's path finding when it finds a path; straight at the point when it does not (off the nav mesh).
-            if (AI!.FindPath(point) && AI.m_path.Count > 0) AI.MoveTo(dt, point, 0f, run);
+            else if (AI!.FindPath(point) && AI.m_path.Count > 0) AI.MoveTo(dt, point, 0f, run);
             else AI.MoveTowards((point - Position).normalized, run);
         }
 
