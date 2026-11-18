@@ -50,6 +50,8 @@ namespace cameraTools.Replay.Shots
         public string replay = "";
         /// <summary>Folder for the written shots, under the shots folder; the intent file's folder when empty.</summary>
         public string @out = "";
+        /// <summary>Frame width ÷ height the shots are framed for: 1.7778 (16:9, the default) or 0.5625 for vertical 9:16.</summary>
+        public float aspect = 16f / 9f;
         public List<ShotIntent> intents = new();
     }
 
