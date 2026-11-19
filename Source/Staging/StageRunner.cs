@@ -74,6 +74,7 @@ namespace cameraTools.Staging
             _scene = scene;
             _start = Time.time;
 
+            if (scene.Room != null) StageRoom.Build(scene.Room.Id, scene.Room.MovePlayer, scene.Room.HidePlayer, scene.Room.Height);
             int cleared = 0;
             if (scene.Clear)
             {
@@ -233,7 +234,9 @@ namespace cameraTools.Staging
             {
                 GameObject prefab = FindPrefab(spec.Prefab);
                 Vector3 at = spec.At!.Ground();
-                GameObject spawned = Instantiate(prefab, at, Quaternion.identity);
+                // Facing is applied when the creature is made, so its own scripts never see another direction.
+                Vector3? first = SpecFacing(spec, at);
+                GameObject spawned = Instantiate(prefab, at, first is Vector3 look ? Quaternion.LookRotation(look) : Quaternion.identity);
                 Character character = spawned.GetComponent<Character>() ?? throw new ArgumentException($"{spec.Prefab} is not a creature");
                 if (spec.Level > 1) character.SetLevel(spec.Level);
                 actor = StagedActor.Attach(character, spec.Id, spawned: true);
@@ -244,7 +247,7 @@ namespace cameraTools.Staging
             if (spec.At != null)
             {
                 Vector3 at = spec.At.Ground();
-                actor.Place(at, spec.Toward != null ? spec.Toward.Ground() - at : spec.Facing is float f ? StagedActor.Compass(f) : null);
+                actor.Place(at, SpecFacing(spec, at));
             }
             else if (spec.Toward != null || spec.Facing != null)
                 actor.Place(actor.Position, spec.Toward != null ? spec.Toward.Ground() - actor.Position : StagedActor.Compass(spec.Facing ?? 0f));
@@ -258,6 +261,15 @@ namespace cameraTools.Staging
             else if (spec.State == "free") actor.Release(false, null);
             else actor.Hold(actor.Character.transform.forward);
             return actor;
+        }
+
+        /// <summary>The direction an actor starts facing: toward a target, a compass heading, or a room's boss direction when it stands on the boss marker.</summary>
+        private static Vector3? SpecFacing(StageActorSpec spec, Vector3 at)
+        {
+            if (spec.Toward != null) return spec.Toward.Ground() - at;
+            if (spec.Facing is float facing) return StagedActor.Compass(facing);
+            if (spec.At != null && spec.At.Point == null && spec.At.Name.Equals(StageRoom.Boss, StringComparison.OrdinalIgnoreCase)) return StageRoom.BossForward;
+            return null;
         }
 
         public void Remove(StagedActor actor)
@@ -281,6 +293,7 @@ namespace cameraTools.Staging
                 count++;
             }
             _actors.Clear();
+            StageRoom.Clear();
             return count;
         }
 

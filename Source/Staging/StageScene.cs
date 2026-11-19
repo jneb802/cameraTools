@@ -40,6 +40,7 @@ namespace cameraTools.Staging
         public Vector3 Ground()
         {
             if (Point is Vector3 point) return GroundSnap ? SnapToGround(point) : point;
+            if (StageRoom.IsRoomName(Name)) return StageRoom.Resolve(Name);
             if (StageRunner.FindActorCharacter(Name) is Character character) return character.transform.position;
             Marker marker = MarkerStore.Find(Name) ?? throw new ArgumentException($"'{Name}' is not an actor, a marker or a point");
             Vector3 anchor = marker.Kind == MarkerKind.Path && marker.waypoints.Count > 0 ? marker.waypoints[0].position : marker.position;
@@ -263,6 +264,27 @@ namespace cameraTools.Staging
         public float Tail = 2f;
     }
 
+    /// <summary>A mod room the scene is staged in: built before the actors are placed, removed when the stage is cleared.</summary>
+    internal sealed class StageRoomSpec
+    {
+        public string Id = "";
+        public bool MovePlayer = true;
+        public bool HidePlayer = true;
+        public float Height = StageRoom.DefaultHeight;
+
+        public static StageRoomSpec Parse(JToken token)
+        {
+            JObject json = token as JObject ?? new JObject { ["id"] = token.Value<string>() };
+            return new StageRoomSpec
+            {
+                Id = StageActorSpec.Text(json, "id") ?? throw new ArgumentException("A scene room needs an id"),
+                MovePlayer = json.Value<bool?>("move") ?? true,
+                HidePlayer = json.Value<bool?>("hide") ?? true,
+                Height = json.Value<float?>("height") ?? StageRoom.DefaultHeight
+            };
+        }
+    }
+
     /// <summary>A scene file from BepInEx/config/cameraTools/scenes.</summary>
     internal sealed class StageScene
     {
@@ -272,6 +294,7 @@ namespace cameraTools.Staging
         public StageTarget? ClearAt;
         public bool ClearDrops = true;
         public bool Clear = true;
+        public StageRoomSpec? Room;
         public float? End;
         public List<StageActorSpec> Actors = new();
         public List<StageAction> Actions = new();
@@ -299,6 +322,7 @@ namespace cameraTools.Staging
                     Lead = record.Value<float?>("lead") ?? 1f,
                     Tail = record.Value<float?>("tail") ?? 2f
                 };
+            if (json["room"] is JToken room && room.Type != JTokenType.Null) scene.Room = StageRoomSpec.Parse(room);
             JToken? clear = json["clear"];
             if (clear?.Type == JTokenType.Boolean) scene.Clear = clear.Value<bool>();
             else if (clear is JObject clearJson)

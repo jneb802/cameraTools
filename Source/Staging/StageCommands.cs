@@ -16,7 +16,8 @@ namespace cameraTools.Staging
             "ct_stage run <scene> [record=<name>] [rate=30|60] - run BepInEx/config/cameraTools/scenes/<scene>.json: clear the area, place the actors, start each action on time (ACCEPTED; poll ct_stage status until state=idle).",
             "ct_stage stop - stop the scene (a recording it started is saved). ct_stage clear [radius] - remove staged creatures, free the player, and with a radius remove other creatures around the player.",
             "ct_stage status | log [lines] | list - scene state and every actor; what happened and when; the scene files.",
-            "ct_stage spawn <id> <prefab> <x> <y|ground> <z> [facing=deg] [toward=<actor|marker|x,z>] [level=n] [health=n] [state=hold|sleep|free] - a held creature at a point.",
+            "ct_stage room <id|clear|status|list> [move=true|false] [hide=true|false] [height=4500] - build a mod room (Valheim Endgame's rooms, such as uber_elder_rootbound) in this world 4,500 m up, move the player just inside it (the room's environment applies) and hide the player's model; clear removes it and returns the player. Actors can then be placed at room.boss, room.stand or room.origin. A scene file has \"room\": \"<id>\" or {id, move, hide, height}.",
+            "ct_stage spawn <id> <prefab> <x> <y|ground> <z>|room.boss [facing=deg] [toward=<actor|marker|x,z>] [level=n] [health=n] [state=hold|sleep|free] - a held creature at a point.",
             "ct_stage take <id> <creature name> [radius=40] - stage the nearest creature of that name. ct_stage remove <id> - despawn a staged creature or free the player.",
             "ct_stage do <id|player> <hold|walk|face|attack|release|wake|sleep|place|equip|block> [key=value ...] - one action now. Keys: points=x,z;x,y,z path=<marker> to=<actor|marker|x,z> stop=m pace=walk|run|sprint then=hold|release",
             "  toward=<actor|marker|x,z> facing=deg attacks=name,name gap=s count=n hold=s secondary=true hunt=true|false target=<actor> at=x,y,z item=<prefab>.",
@@ -25,7 +26,7 @@ namespace cameraTools.Staging
 
         internal static void Register()
         {
-            new Terminal.ConsoleCommand("ct_stage", "Stage creatures and the player: ct_stage <run|stop|clear|status|log|list|spawn|take|remove|do|attacks> ...", args =>
+            new Terminal.ConsoleCommand("ct_stage", "Stage creatures and the player: ct_stage <run|stop|clear|status|log|list|room|spawn|take|remove|do|attacks> ...", args =>
             {
                 try
                 {
@@ -51,16 +52,19 @@ namespace cameraTools.Staging
                 }
                 case "stop":
                     return "OK: " + Runner.Stop("stopped by command");
+                case "room":
+                    return "OK: " + Room(args);
                 case "clear":
                 {
+                    string room = StageRoom.Active ? " and the room" : "";
                     int removed = Runner.RemoveAll();
                     int cleared = 0;
                     if (args.Length > 2 && Player.m_localPlayer != null)
                         cleared = StageRunner.ClearArea(Player.m_localPlayer.transform.position, CommandText.Number(args[2], 1, 500, "radius"), drops: true);
-                    return $"OK: removed {removed} staged actors and {cleared} other creatures";
+                    return $"OK: removed {removed} staged actors{room} and {cleared} other creatures";
                 }
                 case "status":
-                    return "OK: " + Runner.StatusLine() + string.Concat(Runner.Actors.Where(a => a != null).Select(a => "\n" + a.StatusLine()));
+                    return "OK: " + Runner.StatusLine() + " " + StageRoom.Status() + string.Concat(Runner.Actors.Where(a => a != null).Select(a => "\n" + a.StatusLine()));
                 case "log":
                 {
                     int lines = args.Length > 2 ? (int)CommandText.Number(args[2], 1, 400, "lines") : 60;
@@ -75,10 +79,12 @@ namespace cameraTools.Staging
                 case "spawn":
                 {
                     const string usage = "ct_stage spawn <id> <prefab> <x> <y|ground> <z> [key=value ...]";
-                    JObject json = OptionsJson(args, 7);
+                    bool inRoom = args.Length > 4 && StageRoom.IsRoomName(args[4]);
+                    JObject json = OptionsJson(args, inRoom ? 5 : 7);
                     json["id"] = CommandText.Arg(args, 2, usage);
                     json["prefab"] = CommandText.Arg(args, 3, usage);
-                    json["at"] = new JArray(
+                    if (inRoom) json["at"] = args[4];
+                    else json["at"] = new JArray(
                         CommandText.Number(CommandText.Arg(args, 4, usage), -30000, 30000, "x"),
                         IsGround(CommandText.Arg(args, 5, usage)) ? JValue.CreateNull() : new JValue(CommandText.Number(args[5], -1000, 10000, "y")),
                         CommandText.Number(CommandText.Arg(args, 6, usage), -30000, 30000, "z"));
@@ -114,7 +120,28 @@ namespace cameraTools.Staging
                 case "attacks":
                     return "OK: " + Attacks(CommandText.Arg(args, 2, "ct_stage attacks <id|prefab>"));
                 default:
-                    throw new ArgumentException("Use run, stop, clear, status, log, list, spawn, take, remove, do or attacks");
+                    throw new ArgumentException("Use run, stop, clear, status, log, list, room, spawn, take, remove, do or attacks");
+            }
+        }
+
+        private static string Room(Terminal.ConsoleEventArgs args)
+        {
+            const string usage = "ct_stage room <id|clear|status|list> [move=true|false] [hide=true|false] [height=4500]";
+            string id = CommandText.Arg(args, 2, usage);
+            switch (id.ToLowerInvariant())
+            {
+                case "clear":
+                    return StageRoom.Clear() ? "room removed, player returned" : "no room";
+                case "status":
+                    return StageRoom.Status();
+                case "list":
+                    return $"{StageRoom.RoomIds.Length} rooms: {string.Join(", ", StageRoom.RoomIds)}";
+                default:
+                    Dictionary<string, string> options = Options(args, 3);
+                    return StageRoom.Build(id,
+                        !options.TryGetValue("move", out string move) || bool.Parse(move),
+                        !options.TryGetValue("hide", out string hide) || bool.Parse(hide),
+                        options.TryGetValue("height", out string height) ? CommandText.Number(height, 100, 10000, "height") : StageRoom.DefaultHeight);
             }
         }
 
