@@ -89,6 +89,26 @@ namespace cameraTools.Replay
             }
         }
 
+        private readonly HashSet<ParticleSystem> _frozen = new();
+
+        /// <summary>
+        /// A replayed system only shows the recorded particles. Setting ParticleSystem.time on a paused system makes
+        /// Unity simulate it again from the start, which emits new particles and fires sub-emitters into child systems
+        /// that have no recorded state; a stomp's shockwave plane then filled the frame white (#54). So emission and
+        /// sub-emitters are switched off and the time is never set: each recorded particle carries its own age.
+        /// </summary>
+        private void Freeze(ParticleSystem system)
+        {
+            if (_frozen.Add(system))
+            {
+                ParticleSystem.EmissionModule emission = system.emission;
+                emission.enabled = false;
+                ParticleSystem.SubEmittersModule subEmitters = system.subEmitters;
+                subEmitters.enabled = false;
+            }
+            system.Pause(false);
+        }
+
         internal void Apply(VisualState first, VisualState second, float fraction)
         {
             if (_root == null) return;
@@ -112,8 +132,7 @@ namespace cameraTools.Replay
                 if (renderer != null) renderer.enabled = state.Visible;
                 if (!state.Visible) { system.Clear(false); continue; }
                 Activate(system.transform);
-                system.Pause(false);
-                system.time = state.Time;
+                Freeze(system);
                 int count = state.Particles.Length;
                 if (_buffer.Length < count) _buffer = new ParticleSystem.Particle[count];
                 _nextParticles.Clear();
