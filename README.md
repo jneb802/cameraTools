@@ -389,7 +389,7 @@ The overlay on `--strip` stills draws the thirds lines, a shaded 10% margin, eac
 
 ### Solve
 
-`ct_shot solve <intent file> [--no-pixels] [--keep N]` searches for camera positions and writes shot files. The intent file holds one intent or `{"replay", "out", "intents": [...]}`; `out` is a folder under `shots/` (default: the intent file's folder).
+`ct_shot solve <intent file> [--no-pixels] [--keep N]` searches for camera positions and writes shot files. The intent file holds one intent or `{"replay", "out", "aspect", "intents": [...]}`; `out` is a folder under `shots/` (default: the intent file's folder); `aspect` is the frame width ÷ height the shots are framed for, 1.7778 (16:9) by default or 0.5625 for a vertical 9:16 video. Render and check vertical shots at the same aspect (`ct_shot render <file> --size 1080x1920`, `ct_shot check <file> 0.5625`).
 
 ```json
 {"name": "b08_fight", "subject": "795620938:350156", "partner": "795620938:360271", "moment": 27.03, "window": [25.53, 27.83],
