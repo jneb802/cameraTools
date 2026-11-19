@@ -202,6 +202,21 @@ Some mods build objects on every client without a ZDO, so the recorder cannot se
 
 In a replay session each recorded structure is built by its mod's builder when the replay reaches its start time, hidden after its end time and destroyed when the replay closes; seeking keeps exactly one copy. The copies keep their colliders, so `ct_shot check`, `ct_shot solve`, `ct_replay scene-export` and `ct_replay map` see their walls and floors. A structure no loaded mod builds, for example because Valheim Endgame is not installed, is left out with one log line, and the rest of the recording plays. Recorded visuals play like recorded effects in every replay; one whose prefab is not loaded is left out with one log line. `ct_replay structures` prints one line: each recorded structure, whether it is shown now, and how many scene roots carry its name, which shows duplicates.
 
+A take whose recording missed a structure (it shows `structures=0` although the fight was in a room) can be given it by hand: `ct_replay structure add <name> <x> <y> <z> [yaw] [--save]` adds the structure for the whole take, and its mod's builder builds it like a recorded one; `--save` writes it into the replay file, so later sessions, solves and renders have it. For example `ct_replay structure add VE_Room_uber_eikthyr_grove 11392 5000 0 --save`; the room's position is its root's position in the live world (`cli_component_state ValheimEndgame.EndgameRoom`).
+
+### Hiding recorded effects
+
+A recording keeps every effect and sound the game made, including ones a video does not want: the burning flames a fire weapon puts on a creature (`vfx_Burning`), a skill level-up burst, a hit sound. Replays can leave them out by name:
+
+```text
+ct_replay effects list                         # in a replay: each recorded effect prefab and audio clip, with counts
+ct_replay effects hide vfx_Burning              # names are effect prefabs or audio clips, comma-separated
+ct_replay effects show vfx_Burning              # or: show all
+ct_replay effects hidden                        # what is hidden now
+```
+
+The list is the setting `Replay.HiddenEffects`, so it applies to every replay, replay session, `ct_shot` preview, strip and render until it is changed, and it works before a replay is open. The recording itself is not changed. Effects and sounds are recorded separately: an effect prefab that makes a sound (`sfx_...`) is an effect, and the sound it played is an audio clip under its own name, so hide the clip too when the sound should go (`list` shows both).
+
 ### Event tags
 
 Every recording carries timestamped tags an agent can read without screenshots. Times are seconds from the start of the replay, the clock `ct_replay seek` uses; a tag is within 0.25 s of the moment it shows in playback.
