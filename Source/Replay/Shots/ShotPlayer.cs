@@ -928,7 +928,8 @@ namespace cameraTools.Replay.Shots
             string playing = Path.GetFileNameWithoutExtension(player.FilePath ?? player.File.Info.Name);
             if (file.replay.Length > 0 && !string.Equals(file.replay, playing, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException($"The intents are for replay '{file.replay}' but '{playing}' is playing");
-            float aspect = 16f / 9f;
+            if (file.aspect < 0.2f || file.aspect > 5f) throw new ArgumentException($"aspect is width ÷ height between 0.2 and 5, not {file.aspect}");
+            float aspect = file.aspect;
             // Built first so a bad intent fails now, not halfway through.
             List<ShotSolver> solvers = file.intents.Select(intent => new ShotSolver(this, intent, playing, aspect)).ToList();
             string folder = file.@out.Length > 0 ? (Path.IsPathRooted(file.@out) ? file.@out : Path.Combine(Directory, file.@out)) : Path.GetDirectoryName(path)!;

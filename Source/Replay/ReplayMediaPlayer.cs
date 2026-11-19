@@ -58,7 +58,7 @@ namespace cameraTools.Replay
         {
             foreach (EffectTrack track in _file.Effects)
             {
-                bool active = time >= track.Start && time <= track.End && track.Frames.Count > 0;
+                bool active = time >= track.Start && time <= track.End && track.Frames.Count > 0 && !ReplayEffectFilter.IsHidden(track.Prefab);
                 if (!active)
                 {
                     if (_effects.TryGetValue(track, out var inactive)) inactive.Root.SetActive(false);
@@ -83,7 +83,7 @@ namespace cameraTools.Replay
             bool discontinuity = time < _lastTime || Mathf.Abs(time - _lastTime) > 0.2f;
             foreach (SoundTrack track in _file.Sounds)
             {
-                if (time < track.Start || time > track.End + 1f / 30f || track.Frames.Count == 0)
+                if (time < track.Start || time > track.End + 1f / 30f || track.Frames.Count == 0 || ReplayEffectFilter.IsHidden(track.Clip))
                 {
                     if (_sounds.TryGetValue(track, out AudioSource inactive)) inactive.Stop();
                     continue;

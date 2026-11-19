@@ -202,6 +202,21 @@ Some mods build objects on every client without a ZDO, so the recorder cannot se
 
 In a replay session each recorded structure is built by its mod's builder when the replay reaches its start time, hidden after its end time and destroyed when the replay closes; seeking keeps exactly one copy. The copies keep their colliders, so `ct_shot check`, `ct_shot solve`, `ct_replay scene-export` and `ct_replay map` see their walls and floors. A structure no loaded mod builds, for example because Valheim Endgame is not installed, is left out with one log line, and the rest of the recording plays. Recorded visuals play like recorded effects in every replay; one whose prefab is not loaded is left out with one log line. `ct_replay structures` prints one line: each recorded structure, whether it is shown now, and how many scene roots carry its name, which shows duplicates.
 
+A take whose recording missed a structure (it shows `structures=0` although the fight was in a room) can be given it by hand: `ct_replay structure add <name> <x> <y> <z> [yaw] [--save]` adds the structure for the whole take, and its mod's builder builds it like a recorded one; `--save` writes it into the replay file, so later sessions, solves and renders have it. For example `ct_replay structure add VE_Room_uber_eikthyr_grove 11392 5000 0 --save`; the room's position is its root's position in the live world (`cli_component_state ValheimEndgame.EndgameRoom`).
+
+### Hiding recorded effects
+
+A recording keeps every effect and sound the game made, including ones a video does not want: the burning flames a fire weapon puts on a creature (`vfx_Burning`), a skill level-up burst, a hit sound. Replays can leave them out by name:
+
+```text
+ct_replay effects list                         # in a replay: each recorded effect prefab and audio clip, with counts
+ct_replay effects hide vfx_Burning              # names are effect prefabs or audio clips, comma-separated
+ct_replay effects show vfx_Burning              # or: show all
+ct_replay effects hidden                        # what is hidden now
+```
+
+The list is the setting `Replay.HiddenEffects`, so it applies to every replay, replay session, `ct_shot` preview, strip and render until it is changed, and it works before a replay is open. The recording itself is not changed. Effects and sounds are recorded separately: an effect prefab that makes a sound (`sfx_...`) is an effect, and the sound it played is an audio clip under its own name, so hide the clip too when the sound should go (`list` shows both).
+
 ### Event tags
 
 Every recording carries timestamped tags an agent can read without screenshots. Times are seconds from the start of the replay, the clock `ct_replay seek` uses; a tag is within 0.25 s of the moment it shows in playback.
@@ -389,7 +404,7 @@ The overlay on `--strip` stills draws the thirds lines, a shaded 10% margin, eac
 
 ### Solve
 
-`ct_shot solve <intent file> [--no-pixels] [--keep N]` searches for camera positions and writes shot files. The intent file holds one intent or `{"replay", "out", "intents": [...]}`; `out` is a folder under `shots/` (default: the intent file's folder).
+`ct_shot solve <intent file> [--no-pixels] [--keep N]` searches for camera positions and writes shot files. The intent file holds one intent or `{"replay", "out", "aspect", "intents": [...]}`; `out` is a folder under `shots/` (default: the intent file's folder); `aspect` is the frame width ÷ height the shots are framed for, 1.7778 (16:9) by default or 0.5625 for a vertical 9:16 video. Render and check vertical shots at the same aspect (`ct_shot render <file> --size 1080x1920`, `ct_shot check <file> 0.5625`).
 
 ```json
 {"name": "b08_fight", "subject": "795620938:350156", "partner": "795620938:360271", "moment": 27.03, "window": [25.53, 27.83],
@@ -480,6 +495,22 @@ A scene file in `BepInEx/config/cameraTools/scenes/<scene>.json` runs a whole fi
 ```
 
 Actors: `id` (`player` is the local player), `prefab` (spawn) or `take` (stage the nearest creature of that name within `radius`), `at`, `facing` or `toward`, `level`, `health`, `state` (`hold`, `sleep`, `free`), `item`, `zdo` (ZDO strings kept at these values while staged, checked every physics step: `{"VE_Encounter": ""}` keeps a boss spawned inside a Valheim Endgame room out of the room's run, so clearing the room does not kill it and its run-gated abilities keep working). `clear` is `true`/`false` or `{radius, at, drops}`: it removes creatures that are not staged and dropped items.
+
+### Staging in a mod room
+
+A mod can give `ct_stage` rooms to build in the live world. Valheim Endgame does: `ct_stage room list` shows its rooms. `ct_stage room <id> [move=true|false] [hide=true|false] [height=4500]` builds the room 4,500 m above the player with no encounter (no waves, gates, portals or rewards), moves the player just inside it so the room's own environment applies (`uber_elder_rootbound` gives `GDKing`, `uber_eikthyr_grove` gives `Eikthyr`; run `resetenv` first if a debug `env` is set) and hides the player's model. Three names then work wherever a point is accepted: `room.boss` (the room's boss marker), `room.stand` (where the player stands) and `room.origin`. A creature spawned at `room.boss` faces the marker's direction unless `facing` or `toward` is given.
+
+```text
+ct_stage room uber_elder_rootbound
+ct_stage spawn e VE_UberElder room.boss facing=0        # held, idling, facing +z from its first frame
+ct_stage attacks VE_UberElder                           # gd_king_scream, gd_king_shoot, VE_Elder_Shockwave, ...
+ct_stage do e attack attacks=VE_Elder_Shockwave         # plays on cue, then holds again
+ct_stage clear                                          # removes the boss and the room, teleports the player back
+```
+
+A scene file takes `"room": "<id>"` or `{ "id", "move", "hide", "height" }`; the room is built before the actors, and `clear` and the next `run` remove it. The creature is created already facing its direction, so it never walks toward the hidden player. While a creature is staged its AI update does not run, so the game's own animator keeps its idle animation playing; the mod that registered the room also pauses its own encounter mechanics (shield, summons, nests) on staged creatures through `StageHooks.StagedCreatures`, and turns them on again on `release`.
+
+Mods bind to `cameraTools.Staging.StageHooks` by reflection (`RoomProvider`, `StagedCreatures`; `Version` 1), as they do for `ReplayHooks`.
 
 Notes:
 

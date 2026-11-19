@@ -32,6 +32,7 @@ namespace cameraTools
         public static ConfigEntry<int> ReplayMemoryBudgetMiB = null!;
         public static ConfigEntry<int> ReplaySampleRate = null!;
         public static ConfigEntry<KeyboardShortcut> HighlightKey = null!;
+        public static ConfigEntry<string> ReplayHiddenEffects = null!;
 
         public void Awake()
         {
@@ -48,6 +49,8 @@ namespace cameraTools
                     new AcceptableValueList<int>(30, 60)));
             HighlightKey = Config.Bind("Replay", "HighlightKey", new KeyboardShortcut(KeyCode.H),
                 "While watching a replay, tags the current moment and camera view as a highlight");
+            ReplayHiddenEffects = Config.Bind("Replay", "HiddenEffects", "",
+                "Recorded effect prefabs and audio clips that replays, replay sessions, shot previews and renders leave out, comma-separated (for example vfx_Burning). Recordings keep them. Set with ct_replay effects hide/show.");
 
             MarkerMode.BindConfig(Config);
 
