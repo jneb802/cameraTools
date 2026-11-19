@@ -480,6 +480,22 @@ A scene file in `BepInEx/config/cameraTools/scenes/<scene>.json` runs a whole fi
 
 Actors: `id` (`player` is the local player), `prefab` (spawn) or `take` (stage the nearest creature of that name within `radius`), `at`, `facing` or `toward`, `level`, `health`, `state` (`hold`, `sleep`, `free`), `item`. `clear` is `true`/`false` or `{radius, at, drops}`: it removes creatures that are not staged and dropped items.
 
+### Staging in a mod room
+
+A mod can give `ct_stage` rooms to build in the live world. Valheim Endgame does: `ct_stage room list` shows its rooms. `ct_stage room <id> [move=true|false] [hide=true|false] [height=4500]` builds the room 4,500 m above the player with no encounter (no waves, gates, portals or rewards), moves the player just inside it so the room's own environment applies (`uber_elder_rootbound` gives `GDKing`, `uber_eikthyr_grove` gives `Eikthyr`; run `resetenv` first if a debug `env` is set) and hides the player's model. Three names then work wherever a point is accepted: `room.boss` (the room's boss marker), `room.stand` (where the player stands) and `room.origin`. A creature spawned at `room.boss` faces the marker's direction unless `facing` or `toward` is given.
+
+```text
+ct_stage room uber_elder_rootbound
+ct_stage spawn e VE_UberElder room.boss facing=0        # held, idling, facing +z from its first frame
+ct_stage attacks VE_UberElder                           # gd_king_scream, gd_king_shoot, VE_Elder_Shockwave, ...
+ct_stage do e attack attacks=VE_Elder_Shockwave         # plays on cue, then holds again
+ct_stage clear                                          # removes the boss and the room, teleports the player back
+```
+
+A scene file takes `"room": "<id>"` or `{ "id", "move", "hide", "height" }`; the room is built before the actors, and `clear` and the next `run` remove it. The creature is created already facing its direction, so it never walks toward the hidden player. While a creature is staged its AI update does not run, so the game's own animator keeps its idle animation playing; the mod that registered the room also pauses its own encounter mechanics (shield, summons, nests) on staged creatures through `StageHooks.StagedCreatures`, and turns them on again on `release`.
+
+Mods bind to `cameraTools.Staging.StageHooks` by reflection (`RoomProvider`, `StagedCreatures`; `Version` 1), as they do for `ReplayHooks`.
+
 Notes:
 
 - Creature mods that add spawns (Star Level System's spawn rate) also copy staged spawns; an unstaged copy fights normally. Stage in a profile without them, or `ct_stage clear <radius>` after spawning.

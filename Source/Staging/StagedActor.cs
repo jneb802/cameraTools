@@ -55,6 +55,7 @@ namespace cameraTools.Staging
             actor.IsPlayer = character is Player;
             actor.Spawned = spawned;
             if (actor.AI != null) ByAI[actor.AI] = actor;
+            if (!actor.IsPlayer) StageHooks.Notify(character, true);
             actor.Hold(character.transform.forward);
             return actor;
         }
@@ -101,6 +102,7 @@ namespace cameraTools.Staging
                 GiveBackControls();
                 return;
             }
+            StageHooks.Notify(Character, false);
             if (AI is MonsterAI monster)
             {
                 if (monster.IsSleeping()) monster.Wakeup();
