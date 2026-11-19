@@ -70,6 +70,7 @@ namespace cameraTools
             gameObject.AddComponent<AreaRulerManager>();
             gameObject.AddComponent<PathPlayer>();
             gameObject.AddComponent<StageRunner>();
+            gameObject.AddComponent<StageGuides>();
             CreativeZoneCameraController.RegisterCommands();
             ReplayCommands.Register();
             AgentCommands.Register();

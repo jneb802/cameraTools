@@ -19,14 +19,18 @@ namespace cameraTools.Staging
             "ct_stage room <id|clear|status|list> [move=true|false] [hide=true|false] [height=4500] - build a mod room (Valheim Endgame's rooms, such as uber_elder_rootbound) in this world 4,500 m up, move the player just inside it (the room's environment applies) and hide the player's model; clear removes it and returns the player. Actors can then be placed at room.boss, room.stand or room.origin. A scene file has \"room\": \"<id>\" or {id, move, hide, height}.",
             "ct_stage spawn <id> <prefab> <x> <y|ground> <z>|room.boss [facing=deg] [toward=<actor|marker|x,z>] [level=n] [health=n] [state=hold|sleep|free] - a held creature at a point.",
             "ct_stage take <id> <creature name> [radius=40] - stage the nearest creature of that name. ct_stage remove <id> - despawn a staged creature or free the player.",
-            "ct_stage do <id|player> <hold|walk|face|attack|release|wake|sleep|place|equip|block> [key=value ...] - one action now. Keys: points=x,z;x,y,z path=<marker> to=<actor|marker|x,z> stop=m pace=walk|run|sprint then=hold|release",
-            "  toward=<actor|marker|x,z> facing=deg attacks=name,name gap=s count=n hold=s secondary=true hunt=true|false target=<actor> at=x,y,z item=<prefab>.",
-            "ct_stage attacks <id|prefab> - the attack names a creature can be told to use."
+            "ct_stage do <id|player> <hold|walk|face|attack|release|wake|sleep|place|equip|block|health> [key=value ...] - one action now. Keys: points=x,z;x,y,z path=<marker> to=<actor|marker|x,z> stop=m pace=walk|run|sprint then=hold|release",
+            "  toward=<actor|marker|x,z> facing=deg attacks=name,name gap=s count=n hold=s secondary=true hunt=true|false target=<actor> at=x,y,z item=<prefab> value=<health> after=<label> delay=s.",
+            "ct_stage attacks <id|prefab> - the attack names a creature can be told to use.",
+            "ct_stage guide mark <id> at=<actor|marker|x,z> [radius=0.8] [toward=..|facing=deg] [label=text_with_underscores] [state=active|next|off] [trigger=enter|leave|stop] [on=<label>] - a spot to stand on.",
+            "ct_stage guide ring <id> around=<actor|marker|x,z> radius=<m> [toward=..|facing=deg] [arc=70] [label=..] [state=..] [trigger=enter|leave|stop] [on=<label>] - where to stop, at a distance around an actor.",
+            "ct_stage guide path <id> points=x,z;x,z;... | path=<marker> [label=..] [state=..] - a route to walk. ct_stage guide state <id> <active|next|off> | arm <id> | remove <id> | clear | list.",
+            "  Guides show only on the live screen (never recorded, never in replays or renders). A trigger records its label; ct_stage do ... after=<label> [delay=s] waits for it."
         };
 
         internal static void Register()
         {
-            new Terminal.ConsoleCommand("ct_stage", "Stage creatures and the player: ct_stage <run|stop|clear|status|log|list|room|spawn|take|remove|do|attacks> ...", args =>
+            new Terminal.ConsoleCommand("ct_stage", "Stage creatures and the player: ct_stage <run|stop|clear|status|log|list|room|spawn|take|remove|do|attacks|guide> ...", args =>
             {
                 try
                 {
@@ -61,10 +65,14 @@ namespace cameraTools.Staging
                     int cleared = 0;
                     if (args.Length > 2 && Player.m_localPlayer != null)
                         cleared = StageRunner.ClearArea(Player.m_localPlayer.transform.position, CommandText.Number(args[2], 1, 500, "radius"), drops: true);
-                    return $"OK: removed {removed} staged actors{room} and {cleared} other creatures";
+                    int guides = StageGuides.Instance?.Clear() ?? 0;
+                    return $"OK: removed {removed} staged actors{room}, {cleared} other creatures and {guides} guides";
                 }
                 case "status":
-                    return "OK: " + Runner.StatusLine() + " " + StageRoom.Status() + string.Concat(Runner.Actors.Where(a => a != null).Select(a => "\n" + a.StatusLine()));
+                    return "OK: " + Runner.StatusLine() + " " + StageRoom.Status() + string.Concat(Runner.Actors.Where(a => a != null).Select(a => "\n" + a.StatusLine()))
+                           + string.Concat((StageGuides.Instance?.All ?? Enumerable.Empty<StageGuide>()).Select(g => "\n" + g.Describe()));
+                case "guide":
+                    return "OK: " + Guide(args);
                 case "log":
                 {
                     int lines = args.Length > 2 ? (int)CommandText.Number(args[2], 1, 400, "lines") : 60;
@@ -114,6 +122,11 @@ namespace cameraTools.Staging
                     json["do"] = CommandText.Arg(args, 3, usage);
                     StageAction action = StageAction.Parse(json);
                     StagedActor actor = Runner.Actor(action.Actor);
+                    if (action.After.Length > 0)
+                    {
+                        Runner.Queue(action);
+                        return $"OK: queued {action.Describe()} after '{action.After}'{(action.Delay > 0f ? $" + {action.Delay.ToString("F1", CultureInfo.InvariantCulture)} s" : "")}; {Runner.PendingCount} waiting";
+                    }
                     Runner.Apply(action);
                     return $"OK: {action.Describe()}; " + actor.StatusLine();
                 }
@@ -177,6 +190,50 @@ namespace cameraTools.Staging
             return $"{items.Count} attacks for {name}" + string.Concat(lines.Distinct());
         }
 
+        private static string Guide(Terminal.ConsoleEventArgs args)
+        {
+            StageGuides guides = StageGuides.Instance ?? throw new InvalidOperationException("Guides are not loaded");
+            string mode = CommandText.Arg(args, 2, "ct_stage guide <mark|ring|path|state|arm|remove|clear|list> ...").ToLowerInvariant();
+            switch (mode)
+            {
+                case "mark":
+                case "ring":
+                case "path":
+                {
+                    JObject json = OptionsJson(args, 4);
+                    json["id"] = CommandText.Arg(args, 3, $"ct_stage guide {mode} <id> [key=value ...]");
+                    json["kind"] = mode;
+                    return guides.Set(StageGuide.Parse(json)).Describe();
+                }
+                case "state":
+                {
+                    string id = CommandText.Arg(args, 3, "ct_stage guide state <id> <active|next|off>");
+                    guides.SetState(id, StageGuide.ParseState(CommandText.Arg(args, 4, "ct_stage guide state <id> <active|next|off>")));
+                    return guides.Get(id).Describe();
+                }
+                case "arm":
+                {
+                    StageGuide guide = guides.Get(CommandText.Arg(args, 3, "ct_stage guide arm <id>"));
+                    StageGuides.Rearm(guide);
+                    return guide.Describe();
+                }
+                case "remove":
+                {
+                    string id = CommandText.Arg(args, 3, "ct_stage guide remove <id>");
+                    return guides.Remove(id) ? $"removed guide {id}" : throw new ArgumentException($"No guide '{id}'");
+                }
+                case "clear":
+                    return $"removed {guides.Clear()} guides";
+                case "list":
+                {
+                    List<StageGuide> all = guides.All.ToList();
+                    return $"{all.Count} guides" + string.Concat(all.Select(g => "\n" + g.Describe()));
+                }
+                default:
+                    throw new ArgumentException("Use mark, ring, path, state, arm, remove, clear or list");
+            }
+        }
+
         private static bool IsGround(string value) => value.Equals("ground", StringComparison.OrdinalIgnoreCase) || value.Equals("g", StringComparison.OrdinalIgnoreCase);
 
         private static Dictionary<string, string> Options(Terminal.ConsoleEventArgs args, int from)
@@ -201,9 +258,9 @@ namespace cameraTools.Staging
                 string value = option.Value;
                 if (key == "points")
                     json[key] = new JArray(value.Split(';').Where(p => p.Length > 0).Select(p => (JToken)Point(p)));
-                else if ((key == "at" || key == "toward" || key == "target" || key == "to") && value.Contains(','))
+                else if ((key == "at" || key == "toward" || key == "target" || key == "to" || key == "around") && value.Contains(','))
                     json[key] = Point(value);
-                else if (key == "attacks")
+                else if (key == "attacks" || key == "label" || key == "on" || key == "after")
                     json[key] = value;
                 else if (bool.TryParse(value, out bool flag))
                     json[key] = flag;

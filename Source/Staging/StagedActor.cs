@@ -31,6 +31,11 @@ namespace cameraTools.Staging
         public StageMode Mode = StageMode.Hold;
         public StageAction? Action;
         public bool Spawned;
+        /// <summary>
+        /// ZDO strings kept at these values while staged. Other mods can tag a creature a moment after it spawns (an
+        /// Endgame room tags every creature that starts inside it with its run), so the values are checked every step.
+        /// </summary>
+        public readonly Dictionary<string, string> ZdoStrings = new(StringComparer.Ordinal);
 
         private Vector3? _look;
         private int _index;
@@ -43,6 +48,16 @@ namespace cameraTools.Staging
         private bool _attackStarted;
         private float _actionStart;
         private PlayerController? _controller;
+
+        private void KeepZdoStrings()
+        {
+            if (ZdoStrings.Count == 0) return;
+            ZNetView view = Character != null ? Character.GetComponent<ZNetView>() : null!;
+            if (view == null || !view.IsValid() || !view.IsOwner()) return;
+            ZDO zdo = view.GetZDO();
+            foreach (KeyValuePair<string, string> pair in ZdoStrings)
+                if (zdo.GetString(pair.Key) != pair.Value) zdo.Set(pair.Key, pair.Value);
+        }
 
         public static StagedActor? Of(BaseAI ai) => ByAI.TryGetValue(ai, out StagedActor actor) ? actor : null;
 
@@ -293,6 +308,7 @@ namespace cameraTools.Staging
 
         private void FixedUpdate()
         {
+            KeepZdoStrings();
             if (!IsPlayer || Mode == StageMode.Free || Character is not Player player || player != Player.m_localPlayer) return;
             Vector3 move = Vector3.zero;
             bool attack = false, attackHold = false, secondary = false, secondaryHold = false, block = false, run = false;
